@@ -122,11 +122,34 @@ export interface Card {
   created_at: string;
 }
 
+export type ParamKind = "text" | "number";
+
+export interface DashboardParameter {
+  name: string;
+  kind: ParamKind;
+}
+
+export interface ParamBinding {
+  parameter: string;
+  card_id: string;
+  field: string;
+  op?: CompareOp;
+}
+
 export interface Dashboard {
   id: string;
   name: string;
   collection_id?: string | null;
   card_ids: string[];
+  parameters?: DashboardParameter[];
+  bindings?: ParamBinding[];
+}
+
+export interface DashboardCardResult {
+  card_id: string;
+  name: string;
+  result?: QueryResult;
+  error?: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -188,9 +211,19 @@ export const api = {
   runCard: (id: string) => request<QueryResult>(`/cards/${id}/run`, { method: "POST" }),
   dashboards: () => request<Dashboard[]>("/dashboards"),
   createDashboard: (
-    body: { name: string; card_ids: string[] },
+    body: {
+      name: string;
+      card_ids: string[];
+      parameters?: DashboardParameter[];
+      bindings?: ParamBinding[];
+    },
     token: string,
   ) => authed<Dashboard>("/dashboards", "POST", token, body),
+  runDashboard: (id: string, values: Record<string, unknown>) =>
+    request<DashboardCardResult[]>(`/dashboards/${id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    }),
   exportContent: (token: string) =>
     authed<{ collections: unknown[]; cards: Card[]; dashboards: Dashboard[] }>(
       "/export",
