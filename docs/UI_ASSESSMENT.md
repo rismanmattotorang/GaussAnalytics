@@ -17,10 +17,10 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | Connect a database | ✅ | ✅ (register + sync via API/UI) | Drivers as a trait; parameterized everywhere |
 | Browse schema / tables | ✅ | ✅ (synced tables + fields, semantic types) | Sync **fingerprints** columns + infers semantic type |
 | Visual query builder | ✅ rich | 🟡 source/table/fields, filter, summarize + group-by, limit | Builds **GQL**, compiled to bound SQL |
-| Native SQL editor | ✅ | 🟡 compile/run a query; no in-UI SQL editor yet | NL2SQL output is read-only-guardrailed |
+| Native SQL editor | ✅ (allows writes/DDL) | ✅ **read-only-guarded** SQL editor | Writes/DDL/batching rejected *before* the DB; permission-checked + cached |
 | Run + view results table | ✅ | ✅ | Async streaming-ready, cached |
-| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, pie** + chart picker | — |
-| Pivot tables | ✅ | ⬜ | — |
+| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, pie, pivot** + chart picker | — |
+| Pivot tables | ✅ | ✅ pivot view on 3-column aggregates | Pure client transform over cached results |
 | Save questions | ✅ | ✅ | Persisted via generic content store |
 | Dashboards | ✅ drag-and-drop layout, filters, params | 🟡 create from saved cards + grid view that runs them | — |
 | Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler (no email/slack channels UI) | Lean Tokio scheduler (no Quartz) |
@@ -65,10 +65,11 @@ These are independent of the UI and benefit every screen:
 
 ## Honest gaps (tracked in `ROADMAP.md`)
 
-1. **Visualization breadth** — area/scatter/map/funnel/combo + **pivot tables**.
+1. **Visualization breadth** — area/scatter/map/funnel/combo charts.
 2. **Dashboard editor** — drag-and-drop layout, dashboard-level filters/params,
    cross-filtering, auto-refresh.
-3. **Native SQL editor** in the UI (with snippets, variables).
+3. **SQL editor polish** — snippets, query variables/parameters, autocomplete
+   (the read-only-guarded editor itself now exists).
 4. **Subscription delivery** — email/Slack channels and schedules UI.
 5. **Driver breadth** — BigQuery, Snowflake, Redshift, ClickHouse, etc.
 6. **Models / metrics layer**, **data sandboxing / row-level security UI**,

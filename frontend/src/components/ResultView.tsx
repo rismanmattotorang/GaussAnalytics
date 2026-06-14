@@ -1,6 +1,42 @@
 import { useState } from "react";
 import type { QueryResult } from "../api/client";
-import { chartData, isChartable, linePoints, pieSlices, type ChartKind } from "../lib/viz";
+import {
+  chartData,
+  isChartable,
+  isPivotable,
+  linePoints,
+  pieSlices,
+  pivot,
+  type ChartKind,
+} from "../lib/viz";
+
+function PivotTable({ result }: { result: QueryResult }) {
+  const p = pivot(result);
+  return (
+    <div className="table-scroll">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>{result.columns[0]}</th>
+            {p.columns.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {p.rows.map((row) => (
+            <tr key={row.label}>
+              <td>{row.label}</td>
+              {row.cells.map((cell, j) => (
+                <td key={j}>{cell === null ? "∅" : String(cell)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 const PALETTE = ["#38bdf8", "#818cf8", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6"];
 
@@ -65,17 +101,23 @@ function PieChart({ labels, values }: { labels: string[]; values: number[] }) {
 export function ResultView({ result }: { result: QueryResult }) {
   const { columns, rows } = result;
   const chartable = isChartable(result);
+  const pivotable = isPivotable(result);
+  const kinds: ChartKind[] = chartable
+    ? ["table", "bar", "line", "pie"]
+    : pivotable
+      ? ["table", "pivot"]
+      : ["table"];
   const [kind, setKind] = useState<ChartKind>(chartable ? "bar" : "table");
   const data = chartable ? chartData(result) : { labels: [], values: [] };
-  const active = chartable ? kind : "table";
+  const active = kinds.includes(kind) ? kind : "table";
 
   return (
     <div className="result">
       <div className="result__head">
         <span className="muted">{rows.length} row(s)</span>
-        {chartable && (
+        {kinds.length > 1 && (
           <span className="viz-pick">
-            {(["table", "bar", "line", "pie"] as ChartKind[]).map((k) => (
+            {kinds.map((k) => (
               <button key={k} className="link" data-active={k === active} onClick={() => setKind(k)}>
                 {k}
               </button>
@@ -87,6 +129,7 @@ export function ResultView({ result }: { result: QueryResult }) {
       {active === "bar" && <BarChart labels={data.labels} values={data.values} />}
       {active === "line" && <LineChart values={data.values} />}
       {active === "pie" && <PieChart labels={data.labels} values={data.values} />}
+      {active === "pivot" && <PivotTable result={result} />}
 
       {active === "table" && (
         <div className="table-scroll">

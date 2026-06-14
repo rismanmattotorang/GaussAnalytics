@@ -259,6 +259,23 @@ label {
   padding-top: 1rem;
 }
 
+.native__row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.native__editor {
+  width: 100%;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.9rem;
+  background: #0f1530;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.6rem;
+  resize: vertical;
+}
+
 .app__brand {
   font-size: 2.4rem;
   margin: 0;

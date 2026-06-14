@@ -144,11 +144,16 @@ Delivered (compiling + tested):
       `cargo-deny` job; frontend **vitest** tests run in CI.
 - [x] **TUI parity** — content (cards/dashboards) counts surfaced in the console.
 
+- [x] **Read-only-guarded native SQL editor** — `POST /api/dataset/native`
+      (single SELECT/WITH enforced before the DB, permission-checked + cached)
+      + a UI editor view. Safer than Metabase's writable native queries.
+- [x] **Pivot tables** — a pivot view over 3-column aggregates in the result UI.
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
-- [ ] Pivot tables + more chart types (area/scatter/map/funnel/combo).
+- [ ] More chart types (area/scatter/map/funnel/combo).
 - [ ] Drag-and-drop dashboard layout editor, dashboard filters/params.
-- [ ] In-UI native SQL editor; models/metrics layer.
+- [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).
 - [ ] Make `cargo-deny` a required CI gate once the advisory baseline is clean.
