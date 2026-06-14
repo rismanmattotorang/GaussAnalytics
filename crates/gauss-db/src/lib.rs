@@ -16,7 +16,10 @@ pub mod sqlite;
 pub use memory::InMemoryStore;
 pub use mysql::MySqlStore;
 pub use postgres::PgStore;
-pub use repository::{DatabaseRepository, SessionRepository, Store, UserRepository};
+pub use repository::{
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
+    SessionRepository, Store, UserRepository,
+};
 pub use sqlite::{run_migrations, SqliteStore};
 
 use gauss_core::error::CoreResult;

@@ -8,7 +8,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use gauss_auth::Session;
+use gauss_auth::{Permission, Session};
 use gauss_core::domain::{DataSourceKind, Database, Field, Table, User};
 use gauss_core::error::{CoreError, CoreResult};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -16,7 +16,24 @@ use sqlx::Row;
 use std::str::FromStr;
 use uuid::Uuid;
 
-use crate::repository::{DatabaseRepository, SessionRepository, UserRepository};
+use crate::repository::{
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
+    SessionRepository, UserRepository,
+};
+
+/// Storage encoding of a permission scope: the UUID string, or '' for unscoped.
+pub(crate) fn scope_to_str(scope: Option<Uuid>) -> String {
+    scope.map(|u| u.to_string()).unwrap_or_default()
+}
+
+/// Reconstruct the optional scope UUID from its stored string form.
+pub(crate) fn scope_from_str(s: &str) -> Option<Uuid> {
+    if s.is_empty() {
+        None
+    } else {
+        Uuid::parse_str(s).ok()
+    }
+}
 
 /// A persistent application store backed by SQLite.
 pub struct SqliteStore {
@@ -341,6 +358,114 @@ impl SessionRepository for SqliteStore {
     }
 }
 
+#[async_trait]
+impl GrantRepository for SqliteStore {
+    async fn grant(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        let (kind, scope) = perm.to_parts();
+        sqlx::query(
+            "INSERT OR IGNORE INTO permission_grants (user_id, kind, scope) VALUES (?, ?, ?)",
+        )
+        .bind(user_id.to_string())
+        .bind(kind)
+        .bind(scope_to_str(scope))
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn revoke(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        let (kind, scope) = perm.to_parts();
+        sqlx::query("DELETE FROM permission_grants WHERE user_id = ? AND kind = ? AND scope = ?")
+            .bind(user_id.to_string())
+            .bind(kind)
+            .bind(scope_to_str(scope))
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn grants_for(&self, user_id: Uuid) -> CoreResult<Vec<Permission>> {
+        let rows = sqlx::query("SELECT kind, scope FROM permission_grants WHERE user_id = ?")
+            .bind(user_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?;
+        let mut out = Vec::new();
+        for r in &rows {
+            let kind: String = r.try_get("kind").map_err(storage)?;
+            let scope: String = r.try_get("scope").map_err(storage)?;
+            if let Some(p) = Permission::from_parts(&kind, scope_from_str(&scope)) {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for SqliteStore {
+    async fn create_api_key(&self, record: ApiKeyRecord) -> CoreResult<()> {
+        sqlx::query(
+            "INSERT INTO api_keys (id, user_id, name, key_hash, created_at, revoked) \
+             VALUES (?, ?, ?, ?, ?, 0)",
+        )
+        .bind(record.id.to_string())
+        .bind(record.user_id.to_string())
+        .bind(&record.name)
+        .bind(&record.key_hash)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn api_key_user(&self, key_hash: &str) -> CoreResult<Option<Uuid>> {
+        let row = sqlx::query("SELECT user_id FROM api_keys WHERE key_hash = ? AND revoked = 0")
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(parse_uuid(
+                &r.try_get::<String, _>("user_id").map_err(storage)?,
+            )?)),
+        }
+    }
+
+    async fn list_api_keys(&self, user_id: Uuid) -> CoreResult<Vec<ApiKeyInfo>> {
+        let rows = sqlx::query(
+            "SELECT id, name, created_at, revoked FROM api_keys WHERE user_id = ? ORDER BY created_at",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            out.push(ApiKeyInfo {
+                id: parse_uuid(&r.try_get::<String, _>("id").map_err(storage)?)?,
+                name: r.try_get("name").map_err(storage)?,
+                created_at: parse_ts(&r.try_get::<String, _>("created_at").map_err(storage)?)?,
+                revoked: r.try_get::<i64, _>("revoked").map_err(storage)? != 0,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> CoreResult<()> {
+        sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,11 +522,7 @@ mod tests {
             id: Uuid::new_v4(),
             database_id: db.id,
             name: "orders".into(),
-            fields: vec![Field {
-                id: Uuid::new_v4(),
-                name: "total".into(),
-                field_type: gauss_core::domain::FieldType::Float,
-            }],
+            fields: vec![Field::new("total", gauss_core::domain::FieldType::Float)],
         };
         s.upsert_table(table.clone()).await.unwrap();
         // Upsert again to confirm ON CONFLICT works.
@@ -412,6 +533,48 @@ mod tests {
         assert_eq!(fetched.fields[0].name, "total");
         assert_eq!(s.list_databases().await.unwrap().len(), 1);
         assert_eq!(s.list_tables(db.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn grants_persist_and_revoke() {
+        use gauss_auth::Permission;
+        let s = store().await;
+        let uid = Uuid::new_v4();
+        let db = Uuid::new_v4();
+        s.grant(uid, Permission::ReadDatabase { database_id: db })
+            .await
+            .unwrap();
+        s.grant(uid, Permission::CreateContent).await.unwrap();
+        // idempotent
+        s.grant(uid, Permission::CreateContent).await.unwrap();
+        let mut g = s.grants_for(uid).await.unwrap();
+        g.sort_by_key(|p| format!("{p:?}"));
+        assert_eq!(g.len(), 2);
+        s.revoke(uid, Permission::CreateContent).await.unwrap();
+        assert_eq!(s.grants_for(uid).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn api_keys_lifecycle() {
+        use crate::repository::ApiKeyRecord;
+        let s = store().await;
+        let uid = Uuid::new_v4();
+        s.create_api_key(ApiKeyRecord {
+            id: Uuid::new_v4(),
+            user_id: uid,
+            name: "ci".into(),
+            key_hash: "abc123".into(),
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(s.api_key_user("abc123").await.unwrap(), Some(uid));
+        let keys = s.list_api_keys(uid).await.unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(!keys[0].revoked);
+        s.revoke_api_key(keys[0].id).await.unwrap();
+        assert_eq!(s.api_key_user("abc123").await.unwrap(), None);
+        assert!(s.list_api_keys(uid).await.unwrap()[0].revoked);
     }
 
     #[tokio::test]

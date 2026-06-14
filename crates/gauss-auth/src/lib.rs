@@ -6,10 +6,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod apikey;
 pub mod password;
 pub mod perms;
 pub mod session;
 
+pub use apikey::{generate_api_key, hash_api_key};
 pub use password::{hash_password, verify_password};
 pub use perms::{Permission, PermissionSet, Role};
 pub use session::Session;

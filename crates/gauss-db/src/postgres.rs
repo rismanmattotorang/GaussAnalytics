@@ -9,14 +9,18 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use gauss_auth::Session;
+use gauss_auth::{Permission, Session};
 use gauss_core::domain::{DataSourceKind, Database, Field, Table, User};
 use gauss_core::error::{CoreError, CoreResult};
 use sqlx::postgres::{PgPool, PgRow};
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::repository::{DatabaseRepository, SessionRepository, UserRepository};
+use crate::repository::{
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
+    SessionRepository, UserRepository,
+};
+use crate::sqlite::{scope_from_str, scope_to_str};
 
 /// A persistent application store backed by PostgreSQL.
 pub struct PgStore {
@@ -308,6 +312,117 @@ impl SessionRepository for PgStore {
     async fn delete_session(&self, token: &str) -> CoreResult<()> {
         sqlx::query("DELETE FROM sessions WHERE token = $1")
             .bind(token)
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl GrantRepository for PgStore {
+    async fn grant(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        let (kind, scope) = perm.to_parts();
+        sqlx::query(
+            "INSERT INTO permission_grants (user_id, kind, scope) VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(user_id.to_string())
+        .bind(kind)
+        .bind(scope_to_str(scope))
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn revoke(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        let (kind, scope) = perm.to_parts();
+        sqlx::query(
+            "DELETE FROM permission_grants WHERE user_id = $1 AND kind = $2 AND scope = $3",
+        )
+        .bind(user_id.to_string())
+        .bind(kind)
+        .bind(scope_to_str(scope))
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn grants_for(&self, user_id: Uuid) -> CoreResult<Vec<Permission>> {
+        let rows = sqlx::query("SELECT kind, scope FROM permission_grants WHERE user_id = $1")
+            .bind(user_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(storage)?;
+        let mut out = Vec::new();
+        for r in &rows {
+            let kind: String = r.try_get("kind").map_err(storage)?;
+            let scope: String = r.try_get("scope").map_err(storage)?;
+            if let Some(p) = Permission::from_parts(&kind, scope_from_str(&scope)) {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for PgStore {
+    async fn create_api_key(&self, record: ApiKeyRecord) -> CoreResult<()> {
+        sqlx::query(
+            "INSERT INTO api_keys (id, user_id, name, key_hash, created_at, revoked) \
+             VALUES ($1, $2, $3, $4, $5, 0)",
+        )
+        .bind(record.id.to_string())
+        .bind(record.user_id.to_string())
+        .bind(&record.name)
+        .bind(&record.key_hash)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn api_key_user(&self, key_hash: &str) -> CoreResult<Option<Uuid>> {
+        let row = sqlx::query("SELECT user_id FROM api_keys WHERE key_hash = $1 AND revoked = 0")
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(storage)?;
+        match row {
+            None => Ok(None),
+            Some(r) => Ok(Some(parse_uuid(
+                &r.try_get::<String, _>("user_id").map_err(storage)?,
+            )?)),
+        }
+    }
+
+    async fn list_api_keys(&self, user_id: Uuid) -> CoreResult<Vec<ApiKeyInfo>> {
+        let rows = sqlx::query(
+            "SELECT id, name, created_at, revoked FROM api_keys WHERE user_id = $1 ORDER BY created_at",
+        )
+        .bind(user_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            out.push(ApiKeyInfo {
+                id: parse_uuid(&r.try_get::<String, _>("id").map_err(storage)?)?,
+                name: r.try_get("name").map_err(storage)?,
+                created_at: parse_ts(&r.try_get::<String, _>("created_at").map_err(storage)?)?,
+                revoked: r.try_get::<i32, _>("revoked").map_err(storage)? != 0,
+            });
+        }
+        Ok(out)
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> CoreResult<()> {
+        sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = $1")
+            .bind(id.to_string())
             .execute(&self.pool)
             .await
             .map_err(storage)?;

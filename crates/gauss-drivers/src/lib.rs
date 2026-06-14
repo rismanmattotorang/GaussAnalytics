@@ -18,7 +18,7 @@ pub mod postgres;
 pub mod sqlite;
 
 use async_trait::async_trait;
-use gauss_core::domain::{DataSourceKind, FieldType};
+use gauss_core::domain::{DataSourceKind, FieldType, Fingerprint};
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::CompiledQuery;
 use serde::Serialize;
@@ -59,6 +59,32 @@ pub trait Driver: Send + Sync {
 
     /// Introspect the source and return its tables and columns.
     async fn sync_schema(&self) -> CoreResult<Vec<DiscoveredTable>>;
+
+    /// Compute value statistics (a fingerprint) for the named columns of a
+    /// table, returned in the same order as `columns`.
+    async fn fingerprint(
+        &self,
+        table: &str,
+        columns: &[String],
+    ) -> CoreResult<Vec<(String, Fingerprint)>>;
+}
+
+/// Shared SQL builder for fingerprints: one row of
+/// `COUNT(*), [COUNT(c), COUNT(DISTINCT c)]*` for the given quoted columns.
+/// `quote` applies the dialect's identifier quoting. `COUNT` is 64-bit in every
+/// supported engine, so the result decodes uniformly to `i64`.
+pub(crate) fn fingerprint_sql(
+    table: &str,
+    columns: &[String],
+    quote: impl Fn(&str) -> String,
+) -> String {
+    let mut sql = String::from("SELECT COUNT(*)");
+    for c in columns {
+        let q = quote(c);
+        sql.push_str(&format!(", COUNT({q}), COUNT(DISTINCT {q})"));
+    }
+    sql.push_str(&format!(" FROM {}", quote(table)));
+    sql
 }
 
 /// Build a [`Driver`] for a data source of the given `kind` at `uri`.

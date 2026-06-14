@@ -7,7 +7,8 @@
 //! that keeps the migration safe.
 
 use async_trait::async_trait;
-use gauss_auth::Session;
+use chrono::{DateTime, Utc};
+use gauss_auth::{Permission, Session};
 use gauss_core::domain::{Database, Table, User};
 use gauss_core::error::CoreResult;
 use uuid::Uuid;
@@ -45,7 +46,50 @@ pub trait SessionRepository: Send + Sync {
     async fn delete_session(&self, token: &str) -> CoreResult<()>;
 }
 
+/// Persistence for persisted, per-user permission grants.
+#[async_trait]
+pub trait GrantRepository: Send + Sync {
+    async fn grant(&self, user_id: Uuid, perm: Permission) -> CoreResult<()>;
+    async fn revoke(&self, user_id: Uuid, perm: Permission) -> CoreResult<()>;
+    async fn grants_for(&self, user_id: Uuid) -> CoreResult<Vec<Permission>>;
+}
+
+/// A stored API key (only the hash is persisted).
+#[derive(Debug, Clone)]
+pub struct ApiKeyRecord {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub key_hash: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Metadata about an API key, safe to return to clients (no hash).
+#[derive(Debug, Clone)]
+pub struct ApiKeyInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+    pub revoked: bool,
+}
+
+/// Persistence for DB-backed, rotatable API keys.
+#[async_trait]
+pub trait ApiKeyRepository: Send + Sync {
+    async fn create_api_key(&self, record: ApiKeyRecord) -> CoreResult<()>;
+    /// The owning user of an *active* (non-revoked) key with this hash.
+    async fn api_key_user(&self, key_hash: &str) -> CoreResult<Option<Uuid>>;
+    async fn list_api_keys(&self, user_id: Uuid) -> CoreResult<Vec<ApiKeyInfo>>;
+    async fn revoke_api_key(&self, id: Uuid) -> CoreResult<()>;
+}
+
 /// The full application store: the union of all repositories. The server holds
 /// one `Arc<dyn Store>`.
-pub trait Store: UserRepository + DatabaseRepository + SessionRepository {}
-impl<T: UserRepository + DatabaseRepository + SessionRepository> Store for T {}
+pub trait Store:
+    UserRepository + DatabaseRepository + SessionRepository + GrantRepository + ApiKeyRepository
+{
+}
+impl<T> Store for T where
+    T: UserRepository + DatabaseRepository + SessionRepository + GrantRepository + ApiKeyRepository
+{
+}

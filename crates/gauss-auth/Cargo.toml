@@ -14,3 +14,4 @@ uuid.workspace = true
 chrono.workspace = true
 argon2 = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
+sha2 = "0.10"

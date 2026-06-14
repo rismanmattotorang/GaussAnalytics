@@ -54,6 +54,12 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/logout", post(auth_logout))
         .route("/auth/me", get(auth_me))
         .route("/users", get(list_users))
+        .route(
+            "/users/{id}/grants",
+            get(list_grants).post(add_grant).delete(revoke_grant),
+        )
+        .route("/api-keys", get(list_api_keys).post(create_api_key))
+        .route("/api-keys/{id}/revoke", post(revoke_api_key))
         .route("/databases", get(list_databases).post(create_database))
         .route("/databases/{id}/sync", post(sync_database))
         .route("/databases/{id}/tables", get(list_database_tables))
@@ -201,6 +207,154 @@ async fn list_users(
 }
 
 // ---------------------------------------------------------------------------
+// Permission grants (admin)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct GrantBody {
+    kind: String,
+    #[serde(default)]
+    scope: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+struct GrantInfo {
+    kind: String,
+    scope: Option<Uuid>,
+}
+
+fn parse_permission(body: &GrantBody) -> Result<Permission, ApiError> {
+    Permission::from_parts(&body.kind, body.scope).ok_or_else(|| {
+        CoreError::InvalidQuery(format!("unknown permission `{}`", body.kind)).into()
+    })
+}
+
+async fn add_grant(
+    State(st): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<GrantBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&st, &headers).await?;
+    st.store.grant(user_id, parse_permission(&body)?).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn revoke_grant(
+    State(st): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<GrantBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&st, &headers).await?;
+    st.store.revoke(user_id, parse_permission(&body)?).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn list_grants(
+    State(st): State<AppState>,
+    Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<GrantInfo>>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let grants = st
+        .store
+        .grants_for(user_id)
+        .await?
+        .into_iter()
+        .map(|p| {
+            let (kind, scope) = p.to_parts();
+            GrantInfo {
+                kind: kind.to_string(),
+                scope,
+            }
+        })
+        .collect();
+    Ok(Json(grants))
+}
+
+// ---------------------------------------------------------------------------
+// API keys (rotatable, DB-backed)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateApiKeyBody {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct CreatedApiKey {
+    id: Uuid,
+    name: String,
+    /// The plaintext key — shown exactly once, at creation.
+    key: String,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct ApiKeyView {
+    id: Uuid,
+    name: String,
+    created_at: String,
+    revoked: bool,
+}
+
+async fn create_api_key(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateApiKeyBody>,
+) -> Result<Json<CreatedApiKey>, ApiError> {
+    let current = auth::authenticate(&st, &headers).await?;
+    let plaintext = gauss_auth::generate_api_key();
+    let now = Utc::now();
+    let record = gauss_db::ApiKeyRecord {
+        id: Uuid::new_v4(),
+        user_id: current.user.id,
+        name: body.name.clone(),
+        key_hash: gauss_auth::hash_api_key(&plaintext),
+        created_at: now,
+    };
+    let id = record.id;
+    st.store.create_api_key(record).await?;
+    Ok(Json(CreatedApiKey {
+        id,
+        name: body.name,
+        key: plaintext,
+        created_at: now.to_rfc3339(),
+    }))
+}
+
+async fn list_api_keys(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ApiKeyView>>, ApiError> {
+    let current = auth::authenticate(&st, &headers).await?;
+    let keys = st
+        .store
+        .list_api_keys(current.user.id)
+        .await?
+        .into_iter()
+        .map(|k| ApiKeyView {
+            id: k.id,
+            name: k.name,
+            created_at: k.created_at.to_rfc3339(),
+            revoked: k.revoked,
+        })
+        .collect();
+    Ok(Json(keys))
+}
+
+async fn revoke_api_key(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    auth::authenticate(&st, &headers).await?;
+    st.store.revoke_api_key(id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------------------
 // Databases
 // ---------------------------------------------------------------------------
 
@@ -279,15 +433,29 @@ async fn sync_database(
 
     let mut summary = Vec::with_capacity(discovered.len());
     for dt in discovered {
-        let fields = dt
+        // Fingerprint the columns to derive value stats + semantic types.
+        let col_names: Vec<String> = dt.columns.iter().map(|c| c.name.clone()).collect();
+        let prints: std::collections::HashMap<String, gauss_core::domain::Fingerprint> = driver
+            .fingerprint(&dt.name, &col_names)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let fields: Vec<Field> = dt
             .columns
             .iter()
-            .map(|c| Field {
-                id: Uuid::new_v4(),
-                name: c.name.clone(),
-                field_type: c.field_type,
+            .map(|c| {
+                let mut f = Field::new(c.name.clone(), c.field_type);
+                if let Some(fp) = prints.get(&c.name) {
+                    f.semantic_type =
+                        Some(gauss_core::domain::infer_semantic_type(c.field_type, fp));
+                    f.fingerprint = Some(fp.clone());
+                }
+                f
             })
             .collect();
+
         st.store
             .upsert_table(Table {
                 id: Uuid::new_v4(),
@@ -499,11 +667,7 @@ pub async fn seed_demo<S: DatabaseRepository + ?Sized>(store: &S) -> gauss_core:
     let db_id = db.id;
     store.create_database(db).await?;
 
-    let mk = |name: &str, ft: FieldType| Field {
-        id: Uuid::new_v4(),
-        name: name.into(),
-        field_type: ft,
-    };
+    let mk = |name: &str, ft: FieldType| Field::new(name, ft);
     store
         .upsert_table(Table {
             id: Uuid::new_v4(),
@@ -799,11 +963,7 @@ mod tests {
                     fields: dt
                         .columns
                         .into_iter()
-                        .map(|c| Field {
-                            id: Uuid::new_v4(),
-                            name: c.name,
-                            field_type: c.field_type,
-                        })
+                        .map(|c| Field::new(c.name, c.field_type))
                         .collect(),
                 })
                 .await
@@ -949,5 +1109,225 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn persisted_grant_allows_viewer_to_read_database() {
+        let (st, db_id) = test_state().await;
+        let uid = Uuid::new_v4();
+        st.store
+            .create_user(
+                User {
+                    id: uid,
+                    email: "viewer@example.com".into(),
+                    display_name: "Viewer".into(),
+                    is_admin: false,
+                    created_at: Utc::now(),
+                },
+                gauss_auth::hash_password("viewerpass12").unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let login = auth::login(&st, "viewer@example.com", "viewerpass12")
+            .await
+            .unwrap();
+
+        // Without a grant the viewer is denied.
+        let denied = compile_dataset(
+            State(st.clone()),
+            bearer(&login.token),
+            Json(CompileRequest {
+                database_id: db_id,
+                query: Query::new("orders"),
+            }),
+        )
+        .await;
+        assert!(denied.is_err());
+
+        // Grant read on the database; now it succeeds.
+        st.store
+            .grant(uid, Permission::ReadDatabase { database_id: db_id })
+            .await
+            .unwrap();
+        let mut q = Query::new("orders");
+        q.fields = vec!["id".into()];
+        let ok = compile_dataset(
+            State(st),
+            bearer(&login.token),
+            Json(CompileRequest {
+                database_id: db_id,
+                query: q,
+            }),
+        )
+        .await;
+        assert!(ok.is_ok());
+    }
+
+    #[tokio::test]
+    async fn db_api_key_authenticates_as_owner() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let admin = st
+            .store
+            .user_by_email("admin@example.com")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let key = gauss_auth::generate_api_key();
+        st.store
+            .create_api_key(gauss_db::ApiKeyRecord {
+                id: Uuid::new_v4(),
+                user_id: admin.id,
+                name: "ci".into(),
+                key_hash: gauss_auth::hash_api_key(&key),
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let mut h = HeaderMap::new();
+        h.insert("x-api-key", key.parse().unwrap());
+        let me = auth_me(State(st), h).await.unwrap();
+        assert_eq!(me.0.email, "admin@example.com");
+    }
+
+    /// Contract-compatibility suite: exercises every endpoint the reused
+    /// frontend client (`frontend/src/api/client.ts`) depends on, asserting
+    /// status codes and JSON shapes so the contract can't silently drift.
+    #[tokio::test]
+    async fn frontend_contract_surface() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::StatusCode;
+        use serde_json::Value as JsonValue;
+        use tower::ServiceExt;
+
+        async fn call(app: axum::Router, req: Request) -> (StatusCode, JsonValue) {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let val = if bytes.is_empty() {
+                JsonValue::Null
+            } else {
+                serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null)
+            };
+            (status, val)
+        }
+
+        let (st, db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let app = router(st);
+
+        // health
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/health").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["name"], "GaussAnalytics");
+        assert_eq!(v["status"], "ok");
+        assert!(v["version"].is_string());
+
+        // version
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/version").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["owner"], "Gaussian Technologies");
+
+        // login -> token
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"email":"admin@example.com","password":"supersecret1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        let token = v["token"].as_str().unwrap().to_string();
+        assert!(v["expires_at"].is_string());
+
+        // me
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/auth/me")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["email"], "admin@example.com");
+        assert_eq!(v["is_admin"], true);
+
+        // users (admin)
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/users")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(v.is_array());
+
+        // databases
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/databases").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(v.is_array());
+
+        // dataset/compile
+        let body = format!(
+            r#"{{"database_id":"{db_id}","query":{{"source_table":"orders","fields":["id"]}}}}"#
+        );
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/dataset/compile")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(v["sql"].is_string());
+        assert!(v["params"].is_array());
+
+        // nl2sql disabled -> 404
+        let body = format!(r#"{{"database_id":"{db_id}","prompt":"hi"}}"#);
+        let (s, _) = call(
+            app.clone(),
+            Request::post("/api/nl2sql")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+
+        // mcp disabled -> 404
+        let (s, _) = call(
+            app,
+            Request::get("/api/mcp/servers")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
     }
 }

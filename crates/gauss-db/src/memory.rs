@@ -4,16 +4,19 @@
 //! thread-safe (`RwLock`-guarded maps) and behaves like the future `sqlx`
 //! implementation from the caller's perspective.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use async_trait::async_trait;
-use gauss_auth::Session;
+use gauss_auth::{Permission, Session};
 use gauss_core::domain::{Database, Table, User};
 use gauss_core::error::{CoreError, CoreResult};
 use uuid::Uuid;
 
-use crate::repository::{DatabaseRepository, SessionRepository, UserRepository};
+use crate::repository::{
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
+    SessionRepository, UserRepository,
+};
 
 /// A thread-safe, process-local application store.
 #[derive(Default)]
@@ -23,6 +26,8 @@ pub struct InMemoryStore {
     databases: RwLock<HashMap<Uuid, Database>>,
     tables: RwLock<HashMap<(Uuid, String), Table>>, // (database_id, name) -> table
     sessions: RwLock<HashMap<String, Session>>,     // token -> session
+    grants: RwLock<HashMap<Uuid, HashSet<Permission>>>, // user_id -> permissions
+    api_keys: RwLock<HashMap<Uuid, (ApiKeyRecord, bool)>>, // id -> (record, revoked)
 }
 
 impl InMemoryStore {
@@ -159,6 +164,82 @@ impl SessionRepository for InMemoryStore {
 
     async fn delete_session(&self, token: &str) -> CoreResult<()> {
         self.sessions.write().map_err(lock_err)?.remove(token);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl GrantRepository for InMemoryStore {
+    async fn grant(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        self.grants
+            .write()
+            .map_err(lock_err)?
+            .entry(user_id)
+            .or_default()
+            .insert(perm);
+        Ok(())
+    }
+
+    async fn revoke(&self, user_id: Uuid, perm: Permission) -> CoreResult<()> {
+        if let Some(set) = self.grants.write().map_err(lock_err)?.get_mut(&user_id) {
+            set.remove(&perm);
+        }
+        Ok(())
+    }
+
+    async fn grants_for(&self, user_id: Uuid) -> CoreResult<Vec<Permission>> {
+        Ok(self
+            .grants
+            .read()
+            .map_err(lock_err)?
+            .get(&user_id)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default())
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for InMemoryStore {
+    async fn create_api_key(&self, record: ApiKeyRecord) -> CoreResult<()> {
+        self.api_keys
+            .write()
+            .map_err(lock_err)?
+            .insert(record.id, (record, false));
+        Ok(())
+    }
+
+    async fn api_key_user(&self, key_hash: &str) -> CoreResult<Option<Uuid>> {
+        Ok(self
+            .api_keys
+            .read()
+            .map_err(lock_err)?
+            .values()
+            .find(|(r, revoked)| !*revoked && r.key_hash == key_hash)
+            .map(|(r, _)| r.user_id))
+    }
+
+    async fn list_api_keys(&self, user_id: Uuid) -> CoreResult<Vec<ApiKeyInfo>> {
+        let mut v: Vec<ApiKeyInfo> = self
+            .api_keys
+            .read()
+            .map_err(lock_err)?
+            .values()
+            .filter(|(r, _)| r.user_id == user_id)
+            .map(|(r, revoked)| ApiKeyInfo {
+                id: r.id,
+                name: r.name.clone(),
+                created_at: r.created_at,
+                revoked: *revoked,
+            })
+            .collect();
+        v.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(v)
+    }
+
+    async fn revoke_api_key(&self, id: Uuid) -> CoreResult<()> {
+        if let Some((_, revoked)) = self.api_keys.write().map_err(lock_err)?.get_mut(&id) {
+            *revoked = true;
+        }
         Ok(())
     }
 }

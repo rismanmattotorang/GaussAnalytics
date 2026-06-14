@@ -34,6 +34,31 @@ pub enum Permission {
     ReadCollection { collection_id: Uuid },
 }
 
+impl Permission {
+    /// Decompose into a `(kind, scope)` pair for storage.
+    pub fn to_parts(&self) -> (&'static str, Option<Uuid>) {
+        match self {
+            Permission::ManageSettings => ("manage_settings", None),
+            Permission::CreateContent => ("create_content", None),
+            Permission::ReadDatabase { database_id } => ("read_database", Some(*database_id)),
+            Permission::ReadCollection { collection_id } => {
+                ("read_collection", Some(*collection_id))
+            }
+        }
+    }
+
+    /// Reconstruct from a stored `(kind, scope)` pair, or `None` if unknown.
+    pub fn from_parts(kind: &str, scope: Option<Uuid>) -> Option<Permission> {
+        match (kind, scope) {
+            ("manage_settings", _) => Some(Permission::ManageSettings),
+            ("create_content", _) => Some(Permission::CreateContent),
+            ("read_database", Some(id)) => Some(Permission::ReadDatabase { database_id: id }),
+            ("read_collection", Some(id)) => Some(Permission::ReadCollection { collection_id: id }),
+            _ => None,
+        }
+    }
+}
+
 /// The set of capabilities held by a principal for the duration of a request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PermissionSet {
