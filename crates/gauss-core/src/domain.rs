@@ -220,6 +220,13 @@ pub struct CardLayout {
     pub w: u8,
 }
 
+/// A named tab grouping a subset of a dashboard's cards.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DashboardTab {
+    pub name: String,
+    pub card_ids: Vec<Uuid>,
+}
+
 /// A dashboard arranges cards for at-a-glance consumption, optionally with
 /// shared filter parameters that apply across its cards and a saved layout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,4 +245,7 @@ pub struct Dashboard {
     /// Other dashboards linked from this one (dashboard-to-dashboard navigation).
     #[serde(default)]
     pub links: Vec<Uuid>,
+    /// Optional tabs grouping cards into named sections.
+    #[serde(default)]
+    pub tabs: Vec<DashboardTab>,
 }

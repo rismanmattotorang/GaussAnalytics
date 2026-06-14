@@ -148,6 +148,11 @@ export interface CardLayout {
   w: number;
 }
 
+export interface DashboardTab {
+  name: string;
+  card_ids: string[];
+}
+
 export interface Dashboard {
   id: string;
   name: string;
@@ -157,6 +162,7 @@ export interface Dashboard {
   bindings?: ParamBinding[];
   layout?: CardLayout[];
   links?: string[];
+  tabs?: DashboardTab[];
 }
 
 export interface DashboardCardResult {
@@ -231,6 +237,7 @@ export const api = {
       parameters?: DashboardParameter[];
       bindings?: ParamBinding[];
       links?: string[];
+      tabs?: DashboardTab[];
     },
     token: string,
   ) => authed<Dashboard>("/dashboards", "POST", token, body),
@@ -248,6 +255,7 @@ export const api = {
       bindings?: ParamBinding[];
       layout?: CardLayout[];
       links?: string[];
+      tabs?: DashboardTab[];
     },
     token: string,
   ) => authed<Dashboard>(`/dashboards/${id}`, "PUT", token, body),

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   chartData,
+  comboData,
   isChartable,
+  isComboable,
   isPivotable,
   isScatterable,
   linePoints,
@@ -44,6 +46,16 @@ describe("viz helpers", () => {
     expect(pts).toHaveLength(2);
     expect(pts[0]).toEqual({ cx: 0, cy: 100 }); // (0,0) -> bottom-left
     expect(pts[1]).toEqual({ cx: 200, cy: 0 }); // (max,max) -> top-right
+  });
+
+  it("detects and builds combo data (label + two measures)", () => {
+    const r = { columns: ["m", "sales", "target"], rows: [["jan", 10, 12], ["feb", 20, 15]] };
+    expect(isComboable(r)).toBe(true);
+    expect(isComboable({ columns: ["a", "b"], rows: [["x", 1]] })).toBe(false);
+    const d = comboData(r);
+    expect(d.labels).toEqual(["jan", "feb"]);
+    expect(d.bars).toEqual([10, 20]);
+    expect(d.line).toEqual([12, 15]);
   });
 
   it("detects and builds a pivot from a 3-column result", () => {

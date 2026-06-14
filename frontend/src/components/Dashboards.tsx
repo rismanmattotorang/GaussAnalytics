@@ -5,6 +5,7 @@ import {
   type Dashboard,
   type DashboardCardResult,
   type DashboardParameter,
+  type DashboardTab,
   type ParamBinding,
   type ParamKind,
 } from "../api/client";
@@ -26,6 +27,7 @@ export function Dashboards({ token }: { token: string | null }) {
   const [layout, setLayout] = useState<LayoutItem[]>([]);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [autoRefresh, setAutoRefresh] = useState<number>(0);
+  const [activeTab, setActiveTab] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   // Create-form state.
@@ -34,6 +36,7 @@ export function Dashboards({ token }: { token: string | null }) {
   const [params, setParams] = useState<DashboardParameter[]>([]);
   const [bindings, setBindings] = useState<ParamBinding[]>([]);
   const [links, setLinks] = useState<string[]>([]);
+  const [tabs, setTabs] = useState<DashboardTab[]>([]);
 
   function load() {
     Promise.all([api.dashboards(), api.cards()])
@@ -63,6 +66,7 @@ export function Dashboards({ token }: { token: string | null }) {
     setFilterValues({});
     setLayout(orderedLayout(d));
     setAutoRefresh(0);
+    setActiveTab(0);
     await runBoard(d, {});
   }
 
@@ -104,6 +108,7 @@ export function Dashboards({ token }: { token: string | null }) {
           bindings: open.bindings,
           layout: layout.map((l) => ({ card_id: l.card_id, w: l.w })),
           links: open.links,
+          tabs: open.tabs,
         },
         token,
       );
@@ -119,6 +124,26 @@ export function Dashboards({ token }: { token: string | null }) {
   }
   function toggleLink(id: string) {
     setLinks((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
+  }
+  function addTab() {
+    setTabs((t) => [...t, { name: `Tab ${t.length + 1}`, card_ids: [] }]);
+  }
+  function setTabName(i: number, name: string) {
+    setTabs((t) => t.map((x, j) => (j === i ? { ...x, name } : x)));
+  }
+  function toggleTabCard(i: number, cardId: string) {
+    setTabs((t) =>
+      t.map((x, j) =>
+        j === i
+          ? {
+              ...x,
+              card_ids: x.card_ids.includes(cardId)
+                ? x.card_ids.filter((c) => c !== cardId)
+                : [...x.card_ids, cardId],
+            }
+          : x,
+      ),
+    );
   }
   function addParam() {
     setParams((p) => [...p, { name: "", kind: "text" }]);
@@ -140,7 +165,7 @@ export function Dashboards({ token }: { token: string | null }) {
     setError(null);
     try {
       await api.createDashboard(
-        { name, card_ids: selected, parameters: params, bindings, links },
+        { name, card_ids: selected, parameters: params, bindings, links, tabs },
         token,
       );
       setName("");
@@ -148,6 +173,7 @@ export function Dashboards({ token }: { token: string | null }) {
       setParams([]);
       setBindings([]);
       setLinks([]);
+      setTabs([]);
       load();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -208,9 +234,30 @@ export function Dashboards({ token }: { token: string | null }) {
           Tip: click a category to cross-filter{token ? "; drag tiles to reorder" : ""}.
         </p>
 
+        {(open.tabs ?? []).length > 0 && (
+          <nav className="app__nav">
+            {open.tabs!.map((t, i) => (
+              <button
+                key={i}
+                className="tab"
+                data-active={i === activeTab}
+                onClick={() => setActiveTab(i)}
+              >
+                {t.name}
+              </button>
+            ))}
+          </nav>
+        )}
+
         {error && <p className="app__error">{error}</p>}
         <div className="dash__grid">
-          {layout.map((item, i) => {
+          {layout
+            .filter((item) => {
+              const tabs = open.tabs ?? [];
+              if (tabs.length === 0) return true;
+              return tabs[activeTab]?.card_ids.includes(item.card_id) ?? false;
+            })
+            .map((item, i) => {
             const r = resultFor(item.card_id);
             return (
               <div
@@ -362,6 +409,36 @@ export function Dashboards({ token }: { token: string | null }) {
                   </label>
                 ))}
               </div>
+            </>
+          )}
+
+          {selected.length > 0 && (
+            <>
+              <p className="muted">
+                Tabs{" "}
+                <button className="link" onClick={addTab}>
+                  + add
+                </button>
+              </p>
+              {tabs.map((t, i) => (
+                <div className="dash__row" key={i}>
+                  <input
+                    placeholder="tab name"
+                    value={t.name}
+                    onChange={(e) => setTabName(i, e.target.value)}
+                  />
+                  {selected.map((id) => (
+                    <label key={id} className="chip">
+                      <input
+                        type="checkbox"
+                        checked={t.card_ids.includes(id)}
+                        onChange={() => toggleTabCard(i, id)}
+                      />
+                      {cardTitle(id)}
+                    </label>
+                  ))}
+                </div>
+              ))}
             </>
           )}
 

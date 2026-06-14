@@ -2,7 +2,9 @@ import { useState } from "react";
 import type { QueryResult } from "../api/client";
 import {
   chartData,
+  comboData,
   isChartable,
+  isComboable,
   isPivotable,
   isScatterable,
   linePoints,
@@ -11,6 +13,36 @@ import {
   scatterPoints,
   type ChartKind,
 } from "../lib/viz";
+
+function ComboChart({ result }: { result: QueryResult }) {
+  const { labels, bars, line } = comboData(result);
+  const w = 600;
+  const h = 180;
+  const max = Math.max(1, ...bars, ...line);
+  const bw = labels.length > 0 ? w / labels.length : w;
+  return (
+    <svg className="linechart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      {bars.map((v, i) => (
+        <rect
+          key={i}
+          x={i * bw + bw * 0.15}
+          y={h - (v / max) * h}
+          width={bw * 0.7}
+          height={(v / max) * h}
+          fill="rgba(56,189,248,0.55)"
+        />
+      ))}
+      <polyline
+        points={line
+          .map((v, i) => `${(i * bw + bw / 2).toFixed(1)},${(h - (v / max) * h).toFixed(1)}`)
+          .join(" ")}
+        fill="none"
+        stroke="#fbbf24"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
 
 function PivotTable({ result }: { result: QueryResult }) {
   const p = pivot(result);
@@ -148,16 +180,19 @@ export function ResultView({
   const { columns, rows } = result;
   const chartable = isChartable(result);
   const scatterable = isScatterable(result);
+  const comboable = isComboable(result);
   const pivotable = isPivotable(result);
   const kinds: ChartKind[] = chartable
     ? scatterable
       ? ["table", "scatter", "bar", "line", "area", "funnel", "pie"]
       : ["table", "bar", "line", "area", "funnel", "pie"]
-    : pivotable
-      ? ["table", "pivot"]
-      : ["table"];
+    : comboable
+      ? ["table", "combo", "pivot"]
+      : pivotable
+        ? ["table", "pivot"]
+        : ["table"];
   const [kind, setKind] = useState<ChartKind>(
-    chartable ? (scatterable ? "scatter" : "bar") : "table",
+    chartable ? (scatterable ? "scatter" : "bar") : comboable ? "combo" : "table",
   );
   const data = chartable ? chartData(result) : { labels: [], values: [] };
   const active = kinds.includes(kind) ? kind : "table";
@@ -199,6 +234,7 @@ export function ResultView({
           onSelect={onSelect ? (v) => onSelect(columns[0], v) : undefined}
         />
       )}
+      {active === "combo" && <ComboChart result={result} />}
       {active === "pie" && <PieChart labels={data.labels} values={data.values} />}
       {active === "pivot" && <PivotTable result={result} />}
 

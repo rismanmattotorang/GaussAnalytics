@@ -95,6 +95,7 @@ pub fn router(state: AppState) -> Router {
         .route("/dashboards/{id}/run", post(content::run_dashboard))
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
+        .route("/usage", get(usage_stats))
         .route("/embed/token", post(embed_token))
         .route("/embed/resolve", get(embed_resolve))
         .route("/nl2sql", post(nl2sql_translate))
@@ -558,6 +559,7 @@ pub(crate) async fn execute_query(
     let driver = gauss_drivers::connect(db.kind, &uri).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
+    st.usage.record_query();
     Ok(result)
 }
 
@@ -639,7 +641,23 @@ async fn native_dataset(
     let driver = gauss_drivers::connect(db.kind, &uri).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
+    st.usage.record_query();
     Ok(Json(result))
+}
+
+/// Usage analytics for operators (admin).
+async fn usage_stats(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&st, &headers).await?;
+    Ok(Json(serde_json::json!({
+        "queries_run": st.usage.queries_run(),
+        "databases": st.store.list_databases().await?.len(),
+        "cards": st.store.list_content("card").await?.len(),
+        "dashboards": st.store.list_content("dashboard").await?.len(),
+        "users": st.store.list_users().await?.len(),
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -1586,7 +1604,7 @@ mod tests {
 
         // 6. Export reflects the new card.
         let (s, v) = call(
-            app,
+            app.clone(),
             Request::get("/api/export")
                 .header("authorization", &auth)
                 .body(Body::empty())
@@ -1595,6 +1613,19 @@ mod tests {
         .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(v["cards"].as_array().unwrap().len(), 1);
+
+        // 7. Usage analytics reflect the executed query.
+        let (s, v) = call(
+            app,
+            Request::get("/api/usage")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(v["queries_run"].as_u64().unwrap() >= 1);
+        assert_eq!(v["cards"], 1);
 
         let _ = std::fs::remove_file(&path);
     }
@@ -1745,6 +1776,7 @@ mod tests {
             }],
             layout: vec![],
             links: vec![],
+            tabs: vec![],
         };
         store
             .put_content(ContentRecord {
@@ -1815,6 +1847,7 @@ mod tests {
                 bindings: vec![],
                 layout: vec![],
                 links: vec![],
+                tabs: vec![],
             }),
         )
         .await
@@ -1833,6 +1866,7 @@ mod tests {
                 bindings: vec![],
                 layout: vec![CardLayout { card_id, w: 2 }],
                 links: vec![],
+                tabs: vec![],
             }),
         )
         .await
