@@ -1,0 +1,23 @@
+[package]
+name = "gaussctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics command-line entry point: serve | admin | migrate | version."
+
+[[bin]]
+name = "gaussctl"
+path = "src/main.rs"
+
+[dependencies]
+gauss-config.workspace = true
+gauss-db.workspace = true
+gauss-server.workspace = true
+gauss-tui.workspace = true
+
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

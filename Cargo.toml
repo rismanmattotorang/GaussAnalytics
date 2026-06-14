@@ -1,0 +1,86 @@
+# GaussAnalytics — Cargo workspace
+# Owned and operated by Gaussian Technologies.
+#
+# This workspace hosts the Rust port of the analytics platform's backend
+# (formerly Clojure/Python), the administration TUI, and the integration
+# layers for Gaussian's MCP Servers and NL2SQL technologies.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/gauss-core",
+    "crates/gauss-config",
+    "crates/gauss-query",
+    "crates/gauss-db",
+    "crates/gauss-drivers",
+    "crates/gauss-auth",
+    "crates/gauss-mcp-gateway",
+    "crates/gauss-nl2sql",
+    "crates/gauss-server",
+    "crates/gauss-tui",
+    "crates/gaussctl",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+authors = ["Gaussian Technologies <engineering@gaussian.tech>"]
+repository = "https://github.com/rismanmattotorang/gaussanalytics"
+homepage = "https://gaussian.tech/analytics"
+description = "GaussAnalytics — a fast, secure, AI-native business intelligence platform by Gaussian Technologies."
+
+[workspace.dependencies]
+# Internal crates
+gauss-core = { path = "crates/gauss-core" }
+gauss-config = { path = "crates/gauss-config" }
+gauss-query = { path = "crates/gauss-query" }
+gauss-db = { path = "crates/gauss-db" }
+gauss-auth = { path = "crates/gauss-auth" }
+gauss-drivers = { path = "crates/gauss-drivers" }
+gauss-mcp-gateway = { path = "crates/gauss-mcp-gateway" }
+gauss-nl2sql = { path = "crates/gauss-nl2sql" }
+gauss-server = { path = "crates/gauss-server" }
+gauss-tui = { path = "crates/gauss-tui" }
+
+# Async runtime + web
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Serialization / data
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Errors / utility
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI + TUI
+clap = { version = "4", features = ["derive", "env"] }
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Security
+argon2 = "0.5"
+
+# Persistence (Phase 2): the application metadata store and SQL data-source
+# drivers. SQLite is the in-process default; Postgres/MySQL connect via the same
+# sqlx pool pattern as they are enabled.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "mysql", "migrate", "macros"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -1,0 +1,15 @@
+[package]
+name = "gauss-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics GQL-to-parameterized-SQL compiler with per-dialect output."
+
+[dependencies]
+gauss-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+gauss-core.workspace = true

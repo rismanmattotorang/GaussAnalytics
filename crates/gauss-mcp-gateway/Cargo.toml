@@ -1,0 +1,18 @@
+[package]
+name = "gauss-mcp-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Integration layer to Gaussian's MCP Servers: registry, policy, and audit."
+
+[dependencies]
+gauss-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
