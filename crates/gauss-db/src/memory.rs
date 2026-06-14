@@ -95,6 +95,13 @@ impl DatabaseRepository for InMemoryStore {
         Ok(self.databases.read().map_err(lock_err)?.get(&id).cloned())
     }
 
+    async fn set_database_synced(&self, id: Uuid, synced: bool) -> CoreResult<()> {
+        if let Some(db) = self.databases.write().map_err(lock_err)?.get_mut(&id) {
+            db.is_synced = synced;
+        }
+        Ok(())
+    }
+
     async fn upsert_table(&self, table: Table) -> CoreResult<()> {
         let key = (table.database_id, table.name.clone());
         self.tables.write().map_err(lock_err)?.insert(key, table);

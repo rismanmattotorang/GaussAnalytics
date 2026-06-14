@@ -130,4 +130,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
+  createDatabase: (
+    body: { name: string; kind: DataSourceKind; connection_uri?: string },
+    token: string,
+  ) =>
+    request<Database>("/databases", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    }),
+  syncDatabase: (id: string, token: string) =>
+    request<{ database_id: string; tables: { name: string; columns: number }[] }>(
+      `/databases/${id}/sync`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+    ),
+  databaseTables: (id: string) => request<unknown[]>(`/databases/${id}/tables`),
 };

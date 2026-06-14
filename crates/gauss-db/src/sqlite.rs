@@ -212,6 +212,16 @@ impl DatabaseRepository for SqliteStore {
         row.map(database_from_row).transpose()
     }
 
+    async fn set_database_synced(&self, id: Uuid, synced: bool) -> CoreResult<()> {
+        sqlx::query("UPDATE data_sources SET is_synced = ? WHERE id = ?")
+            .bind(synced as i64)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
     async fn upsert_table(&self, table: Table) -> CoreResult<()> {
         let fields_json =
             serde_json::to_string(&table.fields).map_err(|e| CoreError::Storage(e.to_string()))?;

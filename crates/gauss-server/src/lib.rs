@@ -13,7 +13,7 @@ pub mod state;
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -51,7 +51,9 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth_login))
         .route("/auth/logout", post(auth_logout))
         .route("/auth/me", get(auth_me))
-        .route("/databases", get(list_databases))
+        .route("/databases", get(list_databases).post(create_database))
+        .route("/databases/{id}/sync", post(sync_database))
+        .route("/databases/{id}/tables", get(list_database_tables))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
         .route("/nl2sql", post(nl2sql_translate))
@@ -155,6 +157,115 @@ async fn auth_me(
 
 async fn list_databases(State(st): State<AppState>) -> Result<Json<Vec<Database>>, ApiError> {
     Ok(Json(st.store.list_databases().await?))
+}
+
+/// Require an authenticated administrator (holds `ManageSettings`).
+async fn require_admin(st: &AppState, headers: &HeaderMap) -> Result<auth::CurrentUser, ApiError> {
+    let current = auth::authenticate(st, headers).await?;
+    current.perms.require(Permission::ManageSettings)?;
+    Ok(current)
+}
+
+#[derive(Deserialize)]
+struct CreateDatabaseRequest {
+    name: String,
+    kind: DataSourceKind,
+    #[serde(default)]
+    connection_uri: Option<String>,
+}
+
+/// Register a new data source (admin only).
+async fn create_database(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateDatabaseRequest>,
+) -> Result<Json<Database>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let db = Database {
+        id: Uuid::new_v4(),
+        name: req.name,
+        kind: req.kind,
+        is_synced: false,
+        connection_uri: req.connection_uri,
+        created_at: Utc::now(),
+    };
+    st.store.create_database(db.clone()).await?;
+    Ok(Json(db))
+}
+
+#[derive(Serialize)]
+struct SyncedTableSummary {
+    name: String,
+    columns: usize,
+}
+
+#[derive(Serialize)]
+struct SyncResponse {
+    database_id: Uuid,
+    tables: Vec<SyncedTableSummary>,
+}
+
+/// Introspect a data source and persist its tables/columns (admin only).
+async fn sync_database(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<SyncResponse>, ApiError> {
+    require_admin(&st, &headers).await?;
+
+    let db = st
+        .store
+        .database_by_id(id)
+        .await?
+        .ok_or_else(|| CoreError::NotFound(format!("database {id}")))?;
+    let uri = db.connection_uri.clone().ok_or_else(|| {
+        CoreError::InvalidQuery(format!(
+            "data source `{}` has no connection configured",
+            db.name
+        ))
+    })?;
+
+    let driver = gauss_drivers::connect(db.kind, &uri).await?;
+    let discovered = driver.sync_schema().await?;
+
+    let mut summary = Vec::with_capacity(discovered.len());
+    for dt in discovered {
+        let fields = dt
+            .columns
+            .iter()
+            .map(|c| Field {
+                id: Uuid::new_v4(),
+                name: c.name.clone(),
+                field_type: c.field_type,
+            })
+            .collect();
+        st.store
+            .upsert_table(Table {
+                id: Uuid::new_v4(),
+                database_id: db.id,
+                name: dt.name.clone(),
+                fields,
+            })
+            .await?;
+        summary.push(SyncedTableSummary {
+            name: dt.name,
+            columns: dt.columns.len(),
+        });
+    }
+    st.store.set_database_synced(db.id, true).await?;
+
+    Ok(Json(SyncResponse {
+        database_id: db.id,
+        tables: summary,
+    }))
+}
+
+/// List the synced tables of a data source.
+async fn list_database_tables(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<Table>>, ApiError> {
+    Ok(Json(st.store.list_tables(id).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +784,74 @@ mod tests {
         );
         assert_eq!(resp.0.rows.len(), 1);
         assert_eq!(resp.0.rows[0][0], serde_json::json!("paid"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn register_sync_and_list_tables() {
+        let path = std::env::temp_dir().join(format!("gauss_ds_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        let (st, _db) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Anonymous callers cannot register a data source.
+        assert!(create_database(
+            State(st.clone()),
+            HeaderMap::new(),
+            Json(CreateDatabaseRequest {
+                name: "x".into(),
+                kind: DataSourceKind::Sqlite,
+                connection_uri: Some(uri.clone()),
+            }),
+        )
+        .await
+        .is_err());
+
+        let created = create_database(
+            State(st.clone()),
+            hdr.clone(),
+            Json(CreateDatabaseRequest {
+                name: "crm".into(),
+                kind: DataSourceKind::Sqlite,
+                connection_uri: Some(uri.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+        let db_id = created.0.id;
+        assert!(!created.0.is_synced);
+
+        let synced = sync_database(State(st.clone()), Path(db_id), hdr.clone())
+            .await
+            .unwrap();
+        assert!(synced
+            .0
+            .tables
+            .iter()
+            .any(|t| t.name == "customers" && t.columns == 3));
+
+        let tables = list_database_tables(State(st.clone()), Path(db_id))
+            .await
+            .unwrap();
+        let customers = tables.0.iter().find(|t| t.name == "customers").unwrap();
+        assert_eq!(customers.fields.len(), 3);
+
+        // The source is now flagged as synced.
+        let dbs = list_databases(State(st)).await.unwrap();
+        assert!(dbs.0.iter().any(|d| d.id == db_id && d.is_synced));
 
         let _ = std::fs::remove_file(&path);
     }

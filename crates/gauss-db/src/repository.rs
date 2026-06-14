@@ -28,6 +28,8 @@ pub trait DatabaseRepository: Send + Sync {
     async fn create_database(&self, db: Database) -> CoreResult<()>;
     async fn list_databases(&self) -> CoreResult<Vec<Database>>;
     async fn database_by_id(&self, id: Uuid) -> CoreResult<Option<Database>>;
+    /// Update a data source's `is_synced` flag.
+    async fn set_database_synced(&self, id: Uuid, synced: bool) -> CoreResult<()>;
     async fn upsert_table(&self, table: Table) -> CoreResult<()>;
     async fn table_by_name(&self, database_id: Uuid, name: &str) -> CoreResult<Option<Table>>;
     async fn list_tables(&self, database_id: Uuid) -> CoreResult<Vec<Table>>;

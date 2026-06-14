@@ -60,17 +60,19 @@ Scaffolded in this changeset (compiling + tested):
       build a driver from the source's connection, run it, return rows.
 - [x] `serve()` runs on the persistent `SqliteStore` (creates the file, runs
       migrations, seeds demo idempotently, bootstraps an admin from env).
+- [x] Data-source management endpoints (admin-gated): `POST /api/databases`
+      (register), `POST /api/databases/{id}/sync` (introspect + persist tables),
+      `GET /api/databases/{id}/tables` (list synced tables).
 
 Remaining for Phase 2:
 
 - [ ] Postgres + MySQL store and driver implementations (same `sqlx` pattern).
 - [ ] Fingerprinting (value stats) and richer semantic typing during sync.
-- [ ] API keys; make authentication mandatory once per-database/-collection
-      grants are persisted; session middleware as a tower layer.
+- [ ] API keys; make authentication mandatory on read paths once
+      per-database/-collection grants are persisted; session middleware as a
+      tower layer.
 - [ ] Differential testing harness (compare results across engines).
 - [ ] Contract-compatibility suite exercising the reused frontend client.
-- [ ] Data-source CRUD + sync endpoints (register a source, trigger sync) so
-      sources are managed via the API/TUI rather than seeded.
 
 ---
 
