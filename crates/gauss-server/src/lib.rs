@@ -96,6 +96,7 @@ pub fn router(state: AppState) -> Router {
         .route("/nl2sql", post(nl2sql_translate))
         .route("/mcp/servers", get(mcp_list_servers))
         .route("/mcp/invoke", post(mcp_invoke))
+        .route("/mcp/workflow", post(mcp_workflow))
         .layer(middleware::from_fn_with_state(state.clone(), auth_gate))
         .with_state(state);
 
@@ -634,6 +635,9 @@ async fn embed_resolve(
 struct Nl2SqlApiRequest {
     database_id: Uuid,
     prompt: String,
+    /// Prior turns for multi-turn refinement (most-recent last).
+    #[serde(default)]
+    history: Vec<gauss_nl2sql::Turn>,
 }
 
 async fn nl2sql_translate(
@@ -672,6 +676,7 @@ async fn nl2sql_translate(
         .propose(&Nl2SqlRequest {
             prompt: req.prompt,
             context,
+            history: req.history,
         })
         .await?;
     Ok(Json(guarded))
@@ -709,6 +714,73 @@ async fn mcp_invoke(
         .as_ref()
         .ok_or_else(|| CoreError::NotFound("MCP gateway is not enabled".into()))?;
     Ok(Json(gw.invoke(invocation).await?))
+}
+
+#[derive(Deserialize)]
+struct McpWorkflowRequest {
+    /// Ordered tool invocations to run as a chained agent workflow.
+    steps: Vec<ToolInvocation>,
+    /// Stop the workflow at the first failing step (default true).
+    #[serde(default = "default_true")]
+    stop_on_error: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Serialize)]
+struct McpStepOutcome {
+    server: String,
+    tool: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// Run a sequence of MCP tool calls as one agent workflow. Each step is
+/// individually policy-checked and audited by the gateway; results are returned
+/// in order. This is the governed substrate for agentic tool chaining.
+async fn mcp_workflow(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<McpWorkflowRequest>,
+) -> Result<Json<Vec<McpStepOutcome>>, ApiError> {
+    // Agentic tool use is privileged: require an authenticated principal.
+    auth::authenticate(&st, &headers).await?;
+    let gw = st
+        .mcp
+        .as_ref()
+        .ok_or_else(|| CoreError::NotFound("MCP gateway is not enabled".into()))?;
+
+    let mut outcomes = Vec::with_capacity(req.steps.len());
+    for step in req.steps {
+        let (server, tool) = (step.server.clone(), step.tool.clone());
+        match gw.invoke(step).await {
+            Ok(result) => outcomes.push(McpStepOutcome {
+                server,
+                tool,
+                ok: true,
+                output: Some(result.output),
+                error: None,
+            }),
+            Err(e) => {
+                outcomes.push(McpStepOutcome {
+                    server,
+                    tool,
+                    ok: false,
+                    output: None,
+                    error: Some(e.to_string()),
+                });
+                if req.stop_on_error {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(Json(outcomes))
 }
 
 // ---------------------------------------------------------------------------
@@ -1270,6 +1342,183 @@ mod tests {
         assert_eq!(list.0.len(), 1);
         let bundle = content::export_content(State(st), hdr).await.unwrap();
         assert_eq!(bundle.0.cards.len(), 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn mcp_workflow_chains_steps_and_stops_on_error() {
+        use async_trait::async_trait;
+        use gauss_mcp_gateway::{McpGateway, McpServer, McpTool, ToolInvocation, ToolResult};
+
+        struct StubGateway;
+        #[async_trait]
+        impl McpGateway for StubGateway {
+            async fn list_servers(&self) -> gauss_core::CoreResult<Vec<McpServer>> {
+                Ok(vec![])
+            }
+            async fn list_tools(&self, _s: &str) -> gauss_core::CoreResult<Vec<McpTool>> {
+                Ok(vec![])
+            }
+            async fn invoke(&self, inv: ToolInvocation) -> gauss_core::CoreResult<ToolResult> {
+                if inv.tool == "boom" {
+                    Err(CoreError::Integration("boom".into()))
+                } else {
+                    Ok(ToolResult {
+                        output: serde_json::json!({ "echo": inv.tool }),
+                    })
+                }
+            }
+        }
+
+        let (mut st, _db) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let gw: Arc<dyn McpGateway> = Arc::new(StubGateway);
+        st.mcp = Some(gw);
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        let step = |tool: &str| ToolInvocation {
+            server: "fs".into(),
+            tool: tool.into(),
+            arguments: serde_json::Value::Null,
+        };
+        let outcomes = mcp_workflow(
+            State(st),
+            bearer(&login.token),
+            Json(McpWorkflowRequest {
+                steps: vec![step("read"), step("boom"), step("read")],
+                stop_on_error: true,
+            }),
+        )
+        .await
+        .unwrap();
+
+        // read ok, boom fails -> stop (third step not run).
+        assert_eq!(outcomes.0.len(), 2);
+        assert!(outcomes.0[0].ok);
+        assert!(!outcomes.0[1].ok);
+    }
+
+    #[tokio::test]
+    async fn integration_journey_via_router() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::StatusCode;
+        use tower::ServiceExt;
+
+        async fn call(app: axum::Router, req: Request) -> (StatusCode, serde_json::Value) {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+            let val = if bytes.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+            };
+            (status, val)
+        }
+
+        // A real SQLite source with data.
+        let path = std::env::temp_dir().join(format!("gauss_journey_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL, status TEXT)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (total, status) VALUES (10.0,'paid'),(5.0,'paid')")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        let store = Arc::new(InMemoryStore::new());
+        ensure_admin(store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let app = router(AppState::new(AppConfig::default(), store).unwrap());
+
+        // 1. Login.
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"email":"admin@example.com","password":"supersecret1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        let token = v["token"].as_str().unwrap().to_string();
+        let auth = format!("Bearer {token}");
+
+        // 2. Register the source.
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/databases")
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(format!(
+                    r#"{{"name":"sales","kind":"sqlite","connection_uri":"{uri}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        let db_id = v["id"].as_str().unwrap().to_string();
+
+        // 3. Sync schema.
+        let (s, _) = call(
+            app.clone(),
+            Request::post(format!("/api/databases/{db_id}/sync"))
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+
+        // 4. Create a saved question.
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/cards")
+                .header("content-type", "application/json")
+                .header("authorization", &auth)
+                .body(Body::from(format!(
+                    r#"{{"name":"Revenue","database_id":"{db_id}","query":{{"source_table":"orders","aggregations":[{{"func":"sum","field":"total","alias":"value"}}],"breakouts":["status"]}}}}"#
+                )))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        let card_id = v["id"].as_str().unwrap().to_string();
+
+        // 5. Run it.
+        let (s, v) = call(
+            app.clone(),
+            Request::post(format!("/api/cards/{card_id}/run"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["rows"][0][0], "paid");
+        assert_eq!(v["rows"][0][1], 15.0);
+
+        // 6. Export reflects the new card.
+        let (s, v) = call(
+            app,
+            Request::get("/api/export")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["cards"].as_array().unwrap().len(), 1);
 
         let _ = std::fs::remove_file(&path);
     }

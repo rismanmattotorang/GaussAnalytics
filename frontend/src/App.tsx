@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { api, type Database, type Health } from "./api/client";
 import { QueryBuilder } from "./components/QueryBuilder";
 import { SavedQuestions } from "./components/SavedQuestions";
+import { Dashboards } from "./components/Dashboards";
 import { NlAsk } from "./components/NlAsk";
 
-type View = "explore" | "saved" | "ask";
+type View = "explore" | "saved" | "dashboards" | "ask";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -70,9 +71,15 @@ export default function App() {
       </header>
 
       <nav className="app__nav">
-        {(["explore", "saved", "ask"] as View[]).map((v) => (
+        {(["explore", "saved", "dashboards", "ask"] as View[]).map((v) => (
           <button key={v} className="tab" data-active={v === view} onClick={() => setView(v)}>
-            {v === "explore" ? "Explore" : v === "saved" ? "Saved questions" : "Ask (NL2SQL)"}
+            {v === "explore"
+              ? "Explore"
+              : v === "saved"
+                ? "Saved questions"
+                : v === "dashboards"
+                  ? "Dashboards"
+                  : "Ask (NL2SQL)"}
           </button>
         ))}
       </nav>
@@ -86,6 +93,8 @@ export default function App() {
           <QueryBuilder databases={databases} token={token} />
         ) : view === "saved" ? (
           <SavedQuestions />
+        ) : view === "dashboards" ? (
+          <Dashboards token={token} />
         ) : (
           <NlAsk databases={databases} />
         )}

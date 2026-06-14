@@ -27,6 +27,10 @@ pub struct App {
     pub users: Vec<UserRow>,
     /// Whether an admin token is configured (affects the Users view hint).
     pub has_token: bool,
+    /// Saved-question count from the last fetch.
+    pub cards: usize,
+    /// Dashboard count from the last fetch.
+    pub dashboards: usize,
     /// Non-fatal errors from the last refresh, shown to the operator.
     pub errors: Vec<String>,
 }
@@ -83,6 +87,8 @@ impl App {
                 ));
                 s.push_str(&format!("Databases: {}\n", self.databases.len()));
                 s.push_str(&format!("Users:     {}\n", self.users.len()));
+                s.push_str(&format!("Cards:     {}\n", self.cards));
+                s.push_str(&format!("Dashboards:{}\n", self.dashboards));
                 if !self.errors.is_empty() {
                     s.push_str("\nIssues:\n");
                     for e in &self.errors {

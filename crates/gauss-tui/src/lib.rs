@@ -74,6 +74,12 @@ fn refresh(app: &mut App, client: &ApiClient) {
         Ok(d) => app.databases = d,
         Err(e) => app.errors.push(format!("databases: {e}")),
     }
+    if let Ok(c) = client.cards() {
+        app.cards = c.len();
+    }
+    if let Ok(d) = client.dashboards() {
+        app.dashboards = d.len();
+    }
     if client.has_token() {
         match client.users() {
             Ok(u) => app.users = u,
