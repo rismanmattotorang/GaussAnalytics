@@ -1,78 +1,52 @@
-//! `sqlx`-backed SQLite implementation of the repository traits.
+//! `sqlx`-backed PostgreSQL implementation of the repository traits.
 //!
-//! This is the Phase 2 persistent store. It implements exactly the same
-//! [`crate::repository`] traits as the in-memory store, so the rest of the
-//! platform is unaffected by the swap — the strangler boundary in action. The
-//! same pattern extends to Postgres with a `PgPool` and the `postgres` sqlx
-//! feature.
+//! Mirrors [`crate::sqlite`] behind the same traits, differing only where the
+//! dialects differ: `$n` placeholders and `INTEGER` columns decoding to `i32`.
+//! The migration set is shared (the SQL is dialect-portable).
+//!
+//! Live tests require a running PostgreSQL and are `#[ignore]`d by default; set
+//! `GAUSS_TEST_PG_URL` and run `cargo test -- --ignored` to exercise them.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use gauss_auth::Session;
 use gauss_core::domain::{DataSourceKind, Database, Field, Table, User};
 use gauss_core::error::{CoreError, CoreResult};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::postgres::{PgPool, PgRow};
 use sqlx::Row;
-use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::repository::{DatabaseRepository, SessionRepository, UserRepository};
 
-/// A persistent application store backed by SQLite.
-pub struct SqliteStore {
-    pool: SqlitePool,
+/// A persistent application store backed by PostgreSQL.
+pub struct PgStore {
+    pool: PgPool,
 }
 
-impl SqliteStore {
-    /// Connect to the application database (creating the file if missing) and
-    /// run pending migrations.
+impl PgStore {
+    /// Connect to the application database and run pending migrations.
     pub async fn connect(url: &str) -> CoreResult<Self> {
-        let opts = SqliteConnectOptions::from_str(url)
-            .map_err(storage)?
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .connect_with(opts)
-            .await
-            .map_err(storage)?;
+        let pool = PgPool::connect(url).await.map_err(storage)?;
         run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Wrap an existing pool without running migrations.
-    pub fn from_pool(pool: SqlitePool) -> Self {
+    pub fn from_pool(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
+    pub fn pool(&self) -> &PgPool {
         &self.pool
     }
 }
 
-/// Run all embedded migrations against `pool`.
-pub async fn run_migrations(pool: &SqlitePool) -> CoreResult<()> {
+/// Run the shared migration set against a PostgreSQL `pool`.
+pub async fn run_migrations(pool: &PgPool) -> CoreResult<()> {
     sqlx::migrate!("./migrations")
         .run(pool)
         .await
         .map_err(|e| CoreError::Storage(format!("migration failed: {e}")))
-}
-
-/// Connect to a SQLite database URL (creating the file if missing) and run all
-/// pending migrations. Used by `gaussctl migrate`.
-pub async fn migrate_url(url: &str) -> CoreResult<()> {
-    if !url.starts_with("sqlite") {
-        return Err(CoreError::Config(format!(
-            "migrations currently support sqlite URLs only; got {url:?}"
-        )));
-    }
-    let opts = SqliteConnectOptions::from_str(url)
-        .map_err(storage)?
-        .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(opts)
-        .await
-        .map_err(storage)?;
-    run_migrations(&pool).await
 }
 
 fn storage<E: std::fmt::Display>(e: E) -> CoreError {
@@ -111,16 +85,16 @@ fn kind_from_str(s: &str) -> CoreResult<DataSourceKind> {
 }
 
 #[async_trait]
-impl UserRepository for SqliteStore {
+impl UserRepository for PgStore {
     async fn create_user(&self, user: User, password_hash: String) -> CoreResult<()> {
         sqlx::query(
             "INSERT INTO users (id, email, display_name, is_admin, password_hash, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(user.id.to_string())
         .bind(&user.email)
         .bind(&user.display_name)
-        .bind(user.is_admin as i64)
+        .bind(user.is_admin as i32)
         .bind(password_hash)
         .bind(user.created_at.to_rfc3339())
         .execute(&self.pool)
@@ -131,7 +105,7 @@ impl UserRepository for SqliteStore {
 
     async fn user_by_email(&self, email: &str) -> CoreResult<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, email, display_name, is_admin, created_at FROM users WHERE email = ?",
+            "SELECT id, email, display_name, is_admin, created_at FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -142,7 +116,7 @@ impl UserRepository for SqliteStore {
 
     async fn user_by_id(&self, id: Uuid) -> CoreResult<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, email, display_name, is_admin, created_at FROM users WHERE id = ?",
+            "SELECT id, email, display_name, is_admin, created_at FROM users WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -152,7 +126,7 @@ impl UserRepository for SqliteStore {
     }
 
     async fn password_hash(&self, email: &str) -> CoreResult<Option<String>> {
-        let row = sqlx::query("SELECT password_hash FROM users WHERE email = ?")
+        let row = sqlx::query("SELECT password_hash FROM users WHERE email = $1")
             .bind(email)
             .fetch_optional(&self.pool)
             .await
@@ -172,27 +146,27 @@ impl UserRepository for SqliteStore {
     }
 }
 
-fn user_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<User> {
+fn user_from_row(row: PgRow) -> CoreResult<User> {
     Ok(User {
         id: parse_uuid(&row.try_get::<String, _>("id").map_err(storage)?)?,
         email: row.try_get("email").map_err(storage)?,
         display_name: row.try_get("display_name").map_err(storage)?,
-        is_admin: row.try_get::<i64, _>("is_admin").map_err(storage)? != 0,
+        is_admin: row.try_get::<i32, _>("is_admin").map_err(storage)? != 0,
         created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,
     })
 }
 
 #[async_trait]
-impl DatabaseRepository for SqliteStore {
+impl DatabaseRepository for PgStore {
     async fn create_database(&self, db: Database) -> CoreResult<()> {
         sqlx::query(
             "INSERT INTO data_sources (id, name, kind, is_synced, connection_uri, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+             VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(db.id.to_string())
         .bind(&db.name)
         .bind(kind_to_str(db.kind))
-        .bind(db.is_synced as i64)
+        .bind(db.is_synced as i32)
         .bind(db.connection_uri)
         .bind(db.created_at.to_rfc3339())
         .execute(&self.pool)
@@ -213,7 +187,7 @@ impl DatabaseRepository for SqliteStore {
 
     async fn database_by_id(&self, id: Uuid) -> CoreResult<Option<Database>> {
         let row = sqlx::query(
-            "SELECT id, name, kind, is_synced, connection_uri, created_at FROM data_sources WHERE id = ?",
+            "SELECT id, name, kind, is_synced, connection_uri, created_at FROM data_sources WHERE id = $1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -223,8 +197,8 @@ impl DatabaseRepository for SqliteStore {
     }
 
     async fn set_database_synced(&self, id: Uuid, synced: bool) -> CoreResult<()> {
-        sqlx::query("UPDATE data_sources SET is_synced = ? WHERE id = ?")
-            .bind(synced as i64)
+        sqlx::query("UPDATE data_sources SET is_synced = $1 WHERE id = $2")
+            .bind(synced as i32)
             .bind(id.to_string())
             .execute(&self.pool)
             .await
@@ -236,7 +210,7 @@ impl DatabaseRepository for SqliteStore {
         let fields_json =
             serde_json::to_string(&table.fields).map_err(|e| CoreError::Storage(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO source_tables (id, database_id, name, fields_json) VALUES (?, ?, ?, ?) \
+            "INSERT INTO source_tables (id, database_id, name, fields_json) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (database_id, name) DO UPDATE SET fields_json = excluded.fields_json",
         )
         .bind(table.id.to_string())
@@ -251,7 +225,7 @@ impl DatabaseRepository for SqliteStore {
 
     async fn table_by_name(&self, database_id: Uuid, name: &str) -> CoreResult<Option<Table>> {
         let row = sqlx::query(
-            "SELECT id, database_id, name, fields_json FROM source_tables WHERE database_id = ? AND name = ?",
+            "SELECT id, database_id, name, fields_json FROM source_tables WHERE database_id = $1 AND name = $2",
         )
         .bind(database_id.to_string())
         .bind(name)
@@ -263,7 +237,7 @@ impl DatabaseRepository for SqliteStore {
 
     async fn list_tables(&self, database_id: Uuid) -> CoreResult<Vec<Table>> {
         let rows = sqlx::query(
-            "SELECT id, database_id, name, fields_json FROM source_tables WHERE database_id = ? ORDER BY name",
+            "SELECT id, database_id, name, fields_json FROM source_tables WHERE database_id = $1 ORDER BY name",
         )
         .bind(database_id.to_string())
         .fetch_all(&self.pool)
@@ -273,18 +247,18 @@ impl DatabaseRepository for SqliteStore {
     }
 }
 
-fn database_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<Database> {
+fn database_from_row(row: PgRow) -> CoreResult<Database> {
     Ok(Database {
         id: parse_uuid(&row.try_get::<String, _>("id").map_err(storage)?)?,
         name: row.try_get("name").map_err(storage)?,
         kind: kind_from_str(&row.try_get::<String, _>("kind").map_err(storage)?)?,
-        is_synced: row.try_get::<i64, _>("is_synced").map_err(storage)? != 0,
+        is_synced: row.try_get::<i32, _>("is_synced").map_err(storage)? != 0,
         connection_uri: row.try_get("connection_uri").map_err(storage)?,
         created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,
     })
 }
 
-fn table_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<Table> {
+fn table_from_row(row: PgRow) -> CoreResult<Table> {
     let fields: Vec<Field> =
         serde_json::from_str(&row.try_get::<String, _>("fields_json").map_err(storage)?)
             .map_err(|e| CoreError::Storage(e.to_string()))?;
@@ -297,10 +271,10 @@ fn table_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<Table> {
 }
 
 #[async_trait]
-impl SessionRepository for SqliteStore {
+impl SessionRepository for PgStore {
     async fn insert_session(&self, session: Session) -> CoreResult<()> {
         sqlx::query(
-            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES ($1, $2, $3, $4)",
         )
         .bind(&session.token)
         .bind(session.user_id.to_string())
@@ -314,7 +288,7 @@ impl SessionRepository for SqliteStore {
 
     async fn session_by_token(&self, token: &str) -> CoreResult<Option<Session>> {
         let row = sqlx::query(
-            "SELECT token, user_id, created_at, expires_at FROM sessions WHERE token = ?",
+            "SELECT token, user_id, created_at, expires_at FROM sessions WHERE token = $1",
         )
         .bind(token)
         .fetch_optional(&self.pool)
@@ -332,7 +306,7 @@ impl SessionRepository for SqliteStore {
     }
 
     async fn delete_session(&self, token: &str) -> CoreResult<()> {
-        sqlx::query("DELETE FROM sessions WHERE token = ?")
+        sqlx::query("DELETE FROM sessions WHERE token = $1")
             .bind(token)
             .execute(&self.pool)
             .await
@@ -345,83 +319,26 @@ impl SessionRepository for SqliteStore {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn store() -> SqliteStore {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        run_migrations(&pool).await.unwrap();
-        SqliteStore::from_pool(pool)
-    }
-
+    /// Requires a live PostgreSQL; set `GAUSS_TEST_PG_URL` and run with
+    /// `cargo test -p gauss-db -- --ignored`.
     #[tokio::test]
-    async fn user_persist_and_lookup() {
-        let s = store().await;
+    #[ignore]
+    async fn pg_user_round_trip() {
+        let url = std::env::var("GAUSS_TEST_PG_URL").expect("GAUSS_TEST_PG_URL");
+        let store = PgStore::connect(&url).await.unwrap();
         let user = User {
             id: Uuid::new_v4(),
-            email: "ada@example.com".into(),
-            display_name: "Ada".into(),
+            email: format!("u{}@example.com", Uuid::new_v4()),
+            display_name: "Test".into(),
             is_admin: true,
             created_at: Utc::now(),
         };
-        s.create_user(user.clone(), "phc$hash".into())
+        store
+            .create_user(user.clone(), "phc$hash".into())
             .await
             .unwrap();
-
-        let fetched = s.user_by_email("ada@example.com").await.unwrap().unwrap();
+        let fetched = store.user_by_email(&user.email).await.unwrap().unwrap();
         assert_eq!(fetched.id, user.id);
-        assert!(fetched.is_admin);
-        assert_eq!(
-            s.password_hash("ada@example.com").await.unwrap(),
-            Some("phc$hash".into())
-        );
-    }
-
-    #[tokio::test]
-    async fn database_and_table_persist() {
-        let s = store().await;
-        let db = Database {
-            id: Uuid::new_v4(),
-            name: "warehouse".into(),
-            kind: DataSourceKind::Postgres,
-            is_synced: true,
-            connection_uri: Some("sqlite://warehouse.db".into()),
-            created_at: Utc::now(),
-        };
-        s.create_database(db.clone()).await.unwrap();
-
-        let table = Table {
-            id: Uuid::new_v4(),
-            database_id: db.id,
-            name: "orders".into(),
-            fields: vec![Field {
-                id: Uuid::new_v4(),
-                name: "total".into(),
-                field_type: gauss_core::domain::FieldType::Float,
-            }],
-        };
-        s.upsert_table(table.clone()).await.unwrap();
-        // Upsert again to confirm ON CONFLICT works.
-        s.upsert_table(table.clone()).await.unwrap();
-
-        let fetched = s.table_by_name(db.id, "orders").await.unwrap().unwrap();
-        assert_eq!(fetched.fields.len(), 1);
-        assert_eq!(fetched.fields[0].name, "total");
-        assert_eq!(s.list_databases().await.unwrap().len(), 1);
-        assert_eq!(s.list_tables(db.id).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn session_lifecycle() {
-        let s = store().await;
-        let session = Session::new(Uuid::new_v4(), 60, Utc::now());
-        let token = session.token.clone();
-        s.insert_session(session).await.unwrap();
-        assert!(s.session_by_token(&token).await.unwrap().is_some());
-        s.delete_session(&token).await.unwrap();
-        assert!(s.session_by_token(&token).await.unwrap().is_none());
     }
 }

@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/login", post(auth_login))
         .route("/auth/logout", post(auth_logout))
         .route("/auth/me", get(auth_me))
+        .route("/users", get(list_users))
         .route("/databases", get(list_databases).post(create_database))
         .route("/databases/{id}/sync", post(sync_database))
         .route("/databases/{id}/tables", get(list_database_tables))
@@ -149,6 +150,26 @@ async fn auth_me(
         display_name: current.user.display_name,
         is_admin: current.user.is_admin,
     }))
+}
+
+async fn list_users(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MeResponse>>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let users = st
+        .store
+        .list_users()
+        .await?
+        .into_iter()
+        .map(|u| MeResponse {
+            id: u.id,
+            email: u.email,
+            display_name: u.display_name,
+            is_admin: u.is_admin,
+        })
+        .collect();
+    Ok(Json(users))
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +532,8 @@ async fn build_store(config: &AppConfig) -> Result<Arc<dyn Store>, BoxError> {
             }
         }
         Ok(Arc::new(gauss_db::SqliteStore::connect(url).await?))
+    } else if url.starts_with("postgres") {
+        Ok(Arc::new(gauss_db::PgStore::connect(url).await?))
     } else {
         Ok(Arc::new(InMemoryStore::new()))
     }

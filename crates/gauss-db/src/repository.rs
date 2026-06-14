@@ -18,6 +18,8 @@ pub trait UserRepository: Send + Sync {
     async fn create_user(&self, user: User, password_hash: String) -> CoreResult<()>;
     async fn user_by_email(&self, email: &str) -> CoreResult<Option<User>>;
     async fn user_by_id(&self, id: Uuid) -> CoreResult<Option<User>>;
+    /// List all users (admin views). Excludes password hashes.
+    async fn list_users(&self) -> CoreResult<Vec<User>>;
     /// Return the stored Argon2 hash for `email`, if the user exists.
     async fn password_hash(&self, email: &str) -> CoreResult<Option<String>>;
 }

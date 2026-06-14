@@ -8,9 +8,23 @@
 #![forbid(unsafe_code)]
 
 pub mod memory;
+pub mod postgres;
 pub mod repository;
 pub mod sqlite;
 
 pub use memory::InMemoryStore;
+pub use postgres::PgStore;
 pub use repository::{DatabaseRepository, SessionRepository, Store, UserRepository};
-pub use sqlite::{migrate_url, run_migrations, SqliteStore};
+pub use sqlite::{run_migrations, SqliteStore};
+
+use gauss_core::error::CoreResult;
+
+/// Apply migrations to the database at `url`, dispatching by scheme
+/// (`postgres*` vs `sqlite*`). Used by `gaussctl migrate`.
+pub async fn migrate_url(url: &str) -> CoreResult<()> {
+    if url.starts_with("postgres") {
+        postgres::PgStore::connect(url).await.map(|_| ())
+    } else {
+        sqlite::migrate_url(url).await
+    }
+}

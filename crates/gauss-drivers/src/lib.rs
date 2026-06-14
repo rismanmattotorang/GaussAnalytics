@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod postgres;
 pub mod sqlite;
 
 use async_trait::async_trait;
@@ -22,6 +23,7 @@ use gauss_query::CompiledQuery;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+pub use postgres::PgDriver;
 pub use sqlite::SqliteDriver;
 
 /// The tabular result of executing a query.
@@ -64,6 +66,7 @@ pub trait Driver: Send + Sync {
 pub async fn connect(kind: DataSourceKind, uri: &str) -> CoreResult<Box<dyn Driver>> {
     match kind {
         DataSourceKind::Sqlite => Ok(Box::new(SqliteDriver::connect(uri).await?)),
+        DataSourceKind::Postgres => Ok(Box::new(PgDriver::connect(uri).await?)),
         other => Err(CoreError::Integration(format!(
             "data-source driver for {other:?} is not yet implemented"
         ))),

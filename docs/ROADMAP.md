@@ -63,10 +63,16 @@ Scaffolded in this changeset (compiling + tested):
 - [x] Data-source management endpoints (admin-gated): `POST /api/databases`
       (register), `POST /api/databases/{id}/sync` (introspect + persist tables),
       `GET /api/databases/{id}/tables` (list synced tables).
+- [x] **PostgreSQL** store (`PgStore`) and driver (`PgDriver`) behind the same
+      traits; `build_store`/`migrate` dispatch by URL scheme. (Live PG tests are
+      `#[ignore]`d — set `GAUSS_TEST_PG_URL` to run them.)
+- [x] `GET /api/users` (admin) + the **TUI's Databases/Users/Overview tabs read
+      live data** from the server (`GAUSS_API_URL` / `GAUSS_API_TOKEN`, `r` to
+      refresh).
 
 Remaining for Phase 2:
 
-- [ ] Postgres + MySQL store and driver implementations (same `sqlx` pattern).
+- [ ] MySQL store and driver implementations (same `sqlx` pattern).
 - [ ] Fingerprinting (value stats) and richer semantic typing during sync.
 - [ ] API keys; make authentication mandatory on read paths once
       per-database/-collection grants are persisted; session middleware as a

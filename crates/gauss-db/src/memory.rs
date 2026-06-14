@@ -70,6 +70,18 @@ impl UserRepository for InMemoryStore {
             .get(email)
             .cloned())
     }
+
+    async fn list_users(&self) -> CoreResult<Vec<User>> {
+        let mut v: Vec<User> = self
+            .users
+            .read()
+            .map_err(lock_err)?
+            .values()
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| a.email.cmp(&b.email));
+        Ok(v)
+    }
 }
 
 #[async_trait]
