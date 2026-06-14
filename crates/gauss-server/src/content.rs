@@ -194,6 +194,8 @@ pub struct CreateDashboardRequest {
     pub bindings: Vec<ParamBinding>,
     #[serde(default)]
     pub layout: Vec<CardLayout>,
+    #[serde(default)]
+    pub links: Vec<Uuid>,
 }
 
 pub async fn create_dashboard(
@@ -210,6 +212,7 @@ pub async fn create_dashboard(
         parameters: req.parameters,
         bindings: req.bindings,
         layout: req.layout,
+        links: req.links,
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))
@@ -246,6 +249,7 @@ pub async fn update_dashboard(
         parameters: req.parameters,
         bindings: req.bindings,
         layout: req.layout,
+        links: req.links,
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))

@@ -574,6 +574,27 @@ async fn run_dataset(
 struct NativeRequest {
     database_id: Uuid,
     sql: String,
+    /// Positional values for `?` placeholders (SQL-editor variables). Bound as
+    /// parameters, never interpolated.
+    #[serde(default)]
+    params: Vec<serde_json::Value>,
+}
+
+/// Map a JSON value to a typed bound parameter for native SQL variables.
+fn json_to_sql_param(v: &serde_json::Value) -> gauss_query::SqlParam {
+    use gauss_query::SqlParam;
+    match v {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                SqlParam::Int(i)
+            } else {
+                SqlParam::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => SqlParam::Text(s.clone()),
+        serde_json::Value::Bool(b) => SqlParam::Bool(*b),
+        _ => SqlParam::Null,
+    }
 }
 
 /// Execute a hand-written SQL query — **read-only-guarded**: the statement must
@@ -608,7 +629,7 @@ async fn native_dataset(
     let sql = gauss_nl2sql::ensure_read_only(&req.sql)?;
     let compiled = gauss_query::CompiledQuery {
         sql,
-        params: Vec::new(),
+        params: req.params.iter().map(json_to_sql_param).collect(),
     };
 
     let key = cache::cache_key(db.id, &compiled);
@@ -1612,11 +1633,26 @@ mod tests {
             Json(NativeRequest {
                 database_id: db_id,
                 sql: "SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY status".into(),
+                params: vec![],
             }),
         )
         .await
         .unwrap();
         assert_eq!(ok.0.rows.len(), 2);
+
+        // A SQL-editor variable is bound as a parameter (not interpolated).
+        let filtered = native_dataset(
+            State(st.clone()),
+            HeaderMap::new(),
+            Json(NativeRequest {
+                database_id: db_id,
+                sql: "SELECT id FROM orders WHERE status = ?".into(),
+                params: vec![serde_json::json!("paid")],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.0.rows.len(), 2);
 
         // A mutation is rejected by the read-only guardrail.
         let bad = native_dataset(
@@ -1625,6 +1661,7 @@ mod tests {
             Json(NativeRequest {
                 database_id: db_id,
                 sql: "DELETE FROM orders".into(),
+                params: vec![],
             }),
         )
         .await;
@@ -1707,6 +1744,7 @@ mod tests {
                 op: CompareOp::Eq,
             }],
             layout: vec![],
+            links: vec![],
         };
         store
             .put_content(ContentRecord {
@@ -1776,6 +1814,7 @@ mod tests {
                 parameters: vec![],
                 bindings: vec![],
                 layout: vec![],
+                links: vec![],
             }),
         )
         .await
@@ -1793,6 +1832,7 @@ mod tests {
                 parameters: vec![],
                 bindings: vec![],
                 layout: vec![CardLayout { card_id, w: 2 }],
+                links: vec![],
             }),
         )
         .await

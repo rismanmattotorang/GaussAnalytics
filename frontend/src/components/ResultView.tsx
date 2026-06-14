@@ -4,9 +4,11 @@ import {
   chartData,
   isChartable,
   isPivotable,
+  isScatterable,
   linePoints,
   pieSlices,
   pivot,
+  scatterPoints,
   type ChartKind,
 } from "../lib/viz";
 
@@ -78,6 +80,30 @@ function LineChart({ values }: { values: number[] }) {
   );
 }
 
+function AreaChart({ values }: { values: number[] }) {
+  const w = 600;
+  const h = 160;
+  const pts = linePoints(values, w, h);
+  return (
+    <svg className="linechart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <polygon points={`0,${h} ${pts} ${w},${h}`} fill="rgba(56,189,248,0.25)" stroke="#38bdf8" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function ScatterChart({ result }: { result: QueryResult }) {
+  const w = 600;
+  const h = 200;
+  const pts = scatterPoints(result, w, h);
+  return (
+    <svg className="linechart" viewBox={`0 0 ${w} ${h}`}>
+      {pts.map((p, i) => (
+        <circle key={i} cx={p.cx} cy={p.cy} r="4" fill="#38bdf8" />
+      ))}
+    </svg>
+  );
+}
+
 function PieChart({ labels, values }: { labels: string[]; values: number[] }) {
   const slices = pieSlices(values);
   const r = 60;
@@ -121,15 +147,25 @@ export function ResultView({
 }) {
   const { columns, rows } = result;
   const chartable = isChartable(result);
+  const scatterable = isScatterable(result);
   const pivotable = isPivotable(result);
   const kinds: ChartKind[] = chartable
-    ? ["table", "bar", "line", "pie"]
+    ? scatterable
+      ? ["table", "scatter", "bar", "line", "area", "funnel", "pie"]
+      : ["table", "bar", "line", "area", "funnel", "pie"]
     : pivotable
       ? ["table", "pivot"]
       : ["table"];
-  const [kind, setKind] = useState<ChartKind>(chartable ? "bar" : "table");
+  const [kind, setKind] = useState<ChartKind>(
+    chartable ? (scatterable ? "scatter" : "bar") : "table",
+  );
   const data = chartable ? chartData(result) : { labels: [], values: [] };
   const active = kinds.includes(kind) ? kind : "table";
+
+  // Funnel = bars sorted by value, descending.
+  const funnel = data.labels
+    .map((label, i) => ({ label, value: data.values[i] }))
+    .sort((a, b) => b.value - a.value);
 
   return (
     <div className="result">
@@ -154,6 +190,15 @@ export function ResultView({
         />
       )}
       {active === "line" && <LineChart values={data.values} />}
+      {active === "area" && <AreaChart values={data.values} />}
+      {active === "scatter" && <ScatterChart result={result} />}
+      {active === "funnel" && (
+        <BarChart
+          labels={funnel.map((f) => f.label)}
+          values={funnel.map((f) => f.value)}
+          onSelect={onSelect ? (v) => onSelect(columns[0], v) : undefined}
+        />
+      )}
       {active === "pie" && <PieChart labels={data.labels} values={data.values} />}
       {active === "pivot" && <PivotTable result={result} />}
 
