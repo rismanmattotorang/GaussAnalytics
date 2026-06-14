@@ -72,7 +72,9 @@ These are independent of the UI and benefit every screen:
 3. **SQL editor polish** — snippets, query variables/parameters, autocomplete
    (the read-only-guarded editor itself now exists).
 4. **Subscription delivery** — email/Slack channels and schedules UI.
-5. **Driver breadth** — BigQuery, Snowflake, Redshift, ClickHouse, etc.
+5. **Driver breadth** — Postgres/MySQL/SQLite ✅ + BigQuery/Snowflake/ClickHouse
+   (dialects golden-tested; REST drivers integration-stage, live-test pending).
+   Further long tail (Redshift, Databricks, …) per demand.
 6. **Models / metrics layer**, **data sandboxing / row-level security UI**,
    **usage analytics**, and **content versioning**.
 

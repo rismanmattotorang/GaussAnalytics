@@ -159,10 +159,18 @@ Delivered (compiling + tested):
       click-a-category cross-filtering bound to shared parameters, and a
       per-board auto-refresh timer.
 
+- [x] **Driver matrix broadened** — BigQuery, Snowflake, and ClickHouse behind
+      the `Driver` trait: per-engine SQL **dialects are golden-tested** (correct
+      identifier quoting + parameter style, incl. ClickHouse `{pN:Type}` typed
+      params), and REST/HTTP drivers (`reqwest`) execute + introspect + fingerprint.
+      Drivers are integration-stage (compiling + wired; `#[ignore]` live tests
+      gated on `GAUSS_TEST_{BIGQUERY,SNOWFLAKE,CLICKHOUSE}_*`).
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
 - [ ] More chart types (area/scatter/map/funnel/combo).
 - [ ] Tabbed/nested dashboards + dashboard-to-dashboard linking.
+- [ ] Live-validate BigQuery/Snowflake/ClickHouse drivers + add Redshift, etc.
 - [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).

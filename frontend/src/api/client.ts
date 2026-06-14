@@ -10,7 +10,14 @@ export interface Health {
   version: string;
 }
 
-export type DataSourceKind = "postgres" | "mysql" | "sqlite" | "generic";
+export type DataSourceKind =
+  | "postgres"
+  | "mysql"
+  | "sqlite"
+  | "bigquery"
+  | "snowflake"
+  | "clickhouse"
+  | "generic";
 export type FieldType = "integer" | "float" | "text" | "boolean" | "datetime" | "unknown";
 export type SemanticType =
   | "category"

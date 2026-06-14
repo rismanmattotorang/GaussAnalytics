@@ -111,6 +111,9 @@ fn kind_to_str(k: DataSourceKind) -> &'static str {
         DataSourceKind::Postgres => "postgres",
         DataSourceKind::MySql => "mysql",
         DataSourceKind::Sqlite => "sqlite",
+        DataSourceKind::BigQuery => "bigquery",
+        DataSourceKind::Snowflake => "snowflake",
+        DataSourceKind::ClickHouse => "clickhouse",
         DataSourceKind::Generic => "generic",
     }
 }
@@ -120,6 +123,9 @@ fn kind_from_str(s: &str) -> CoreResult<DataSourceKind> {
         "postgres" => Ok(DataSourceKind::Postgres),
         "mysql" => Ok(DataSourceKind::MySql),
         "sqlite" => Ok(DataSourceKind::Sqlite),
+        "bigquery" => Ok(DataSourceKind::BigQuery),
+        "snowflake" => Ok(DataSourceKind::Snowflake),
+        "clickhouse" => Ok(DataSourceKind::ClickHouse),
         "generic" => Ok(DataSourceKind::Generic),
         other => Err(CoreError::Storage(format!(
             "unknown data source kind {other:?}"

@@ -15,7 +15,10 @@ use gauss_core::error::{CoreError, CoreResult};
 use gauss_core::gql::{AggFunc, Aggregation, Filter, Literal, Query};
 use serde::{Deserialize, Serialize};
 
-pub use dialect::{Dialect, GenericDialect, MySqlDialect, PostgresDialect, SqliteDialect};
+pub use dialect::{
+    BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, MySqlDialect, PostgresDialect,
+    SnowflakeDialect, SqliteDialect,
+};
 
 /// A typed parameter to be bound at execution time.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,8 +74,10 @@ struct Builder<'d> {
 impl Builder<'_> {
     /// Bind a literal and return its placeholder token.
     fn bind(&mut self, lit: &Literal) -> String {
-        self.params.push(SqlParam::from(lit));
-        self.dialect.placeholder(self.params.len())
+        let param = SqlParam::from(lit);
+        let placeholder = self.dialect.placeholder(self.params.len() + 1, &param);
+        self.params.push(param);
+        placeholder
     }
 
     fn ident(&self, name: &str) -> String {
