@@ -129,6 +129,15 @@ export interface Card {
   created_at: string;
 }
 
+export interface RlsPolicy {
+  id: string;
+  database_id: string;
+  table: string;
+  column: string;
+  op: CompareOp;
+  value: Literal;
+}
+
 export type ParamKind = "text" | "number";
 
 export interface DashboardParameter {
@@ -259,6 +268,23 @@ export const api = {
     },
     token: string,
   ) => authed<Dashboard>(`/dashboards/${id}`, "PUT", token, body),
+  metrics: () => request<Card[]>("/metrics"),
+  createMetric: (
+    body: { name: string; database_id: string; query: Query },
+    token: string,
+  ) => authed<Card>("/metrics", "POST", token, body),
+  runMetric: (id: string) => request<QueryResult>(`/metrics/${id}/run`, { method: "POST" }),
+  rlsPolicies: (token: string) => authed<RlsPolicy[]>("/rls", "GET", token),
+  createRls: (
+    body: {
+      database_id: string;
+      table: string;
+      column: string;
+      op?: CompareOp;
+      value: Literal;
+    },
+    token: string,
+  ) => authed<RlsPolicy>("/rls", "POST", token, body),
   exportContent: (token: string) =>
     authed<{ collections: unknown[]; cards: Card[]; dashboards: Dashboard[] }>(
       "/export",

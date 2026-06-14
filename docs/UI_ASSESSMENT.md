@@ -50,6 +50,8 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | Mandatory auth | ✅ | ✅ `require_auth` middleware | — |
 | Terminal admin console | ⬜ | ✅ Ratatui TUI over the same API | Unique to GaussAnalytics |
 | Usage analytics | ✅ (enterprise) | ✅ `GET /api/usage` (queries/cards/dashboards/users) | — |
+| Row-level security | ✅ (enterprise) | ✅ admin-defined policies (`/api/rls`), enforced for non-admins | Injected as **bound GQL predicates** — parameterized SQL, unbypassable by query text |
+| Metrics layer | ✅ | ✅ named reusable measures (`/api/metrics`, run on demand) | Stored as GQL aggregate queries; compiled to bound SQL |
 | Audit logging | ✅ (enterprise) | 🟡 MCP/AI audit hooks | — |
 
 ## Where GaussAnalytics is *structurally* ahead
@@ -78,8 +80,11 @@ These are independent of the UI and benefit every screen:
 5. **Driver breadth** — Postgres/MySQL/SQLite ✅ + BigQuery/Snowflake/ClickHouse
    (dialects golden-tested; REST drivers integration-stage, live-test pending).
    Further long tail (Redshift, Databricks, …) per demand.
-6. **Models / metrics layer**, **data sandboxing / row-level security UI**,
-   **usage analytics**, and **content versioning**.
+6. **Metrics layer** ✅ (named measures via `/api/metrics`) and **row-level
+   security** ✅ (admin policies via `/api/rls`, enforced as bound predicates for
+   non-admins) now exist at the API + engine level. Remaining here:
+   **models-as-virtual-datasets**, a dedicated **RLS/metrics management UI**, and
+   **content versioning**.
 
 ## Bottom line
 

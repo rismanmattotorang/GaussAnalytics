@@ -182,14 +182,24 @@ Delivered (compiling + tested):
       snippet presets.
 - [x] **Usage analytics** — `GET /api/usage` (queries run + content/user counts).
 
+- [x] **Metrics layer** — named, reusable measures persisted via the content
+      store (`POST/GET /api/metrics`, `POST /api/metrics/{id}/run`); a metric is
+      a saved aggregate query that can be listed and run on demand, plus a typed
+      frontend client surface.
+- [x] **Row-level security (RLS)** — admin-defined mandatory filters
+      (`POST/GET /api/rls`) automatically injected into queries for **non-admin**
+      principals as **bound GQL predicates** (parameterized SQL, cannot be
+      bypassed by query text); admins bypass. Enforced uniformly on the dataset
+      read path.
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
 - [ ] Geographic **map** charts; inline SQL autocomplete; a schedules UI.
 - [ ] Native **SMTP** email channel (email works today via an HTTP email-API webhook).
 - [ ] Live-validate BigQuery/Snowflake/ClickHouse drivers; add Redshift, etc.
-- [ ] Enterprise breadth: models/metrics layer, row-level-security UI,
-      content versioning.
-- [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
+- [ ] Models-as-virtual-datasets (saved queries reusable as query sources);
+      a dedicated RLS/metrics **management UI** (API + enforcement exist today).
+- [ ] Content versioning.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).
 - [ ] Make `cargo-deny` a required CI gate once the advisory baseline is clean.
