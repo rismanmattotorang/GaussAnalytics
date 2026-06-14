@@ -17,12 +17,12 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | Connect a database | ✅ | ✅ (register + sync via API/UI) | Drivers as a trait; parameterized everywhere |
 | Browse schema / tables | ✅ | ✅ (synced tables + fields, semantic types) | Sync **fingerprints** columns + infers semantic type |
 | Visual query builder | ✅ rich | 🟡 source/table/fields, filter, summarize + group-by, limit | Builds **GQL**, compiled to bound SQL |
-| Native SQL editor | ✅ (allows writes/DDL) | ✅ **read-only-guarded** editor with **`{{variables}}`** | Writes/DDL/batching rejected *before* the DB; variables are bound params; cached |
+| Native SQL editor | ✅ (allows writes/DDL) | ✅ **read-only-guarded** editor, **`{{variables}}`**, **schema browser + snippets** | Writes/DDL/batching rejected *before* the DB; variables are bound params; cached |
 | Run + view results table | ✅ | ✅ | Async streaming-ready, cached |
-| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, area, funnel, scatter, pie, pivot** (map pending) | — |
+| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, area, funnel, scatter, combo, pie, pivot** (map pending) | — |
 | Pivot tables | ✅ | ✅ pivot view on 3-column aggregates | Pure client transform over cached results |
 | Save questions | ✅ | ✅ | Persisted via generic content store |
-| Dashboards | ✅ drag-and-drop layout, filters, params | ✅ compose + **shared filters** + **drag-and-drop layout** + **cross-filter** + **auto-refresh** + **dashboard links** | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
+| Dashboards | ✅ drag-and-drop layout, filters, params, tabs | ✅ compose + **shared filters** + **drag layout** + **cross-filter** + **auto-refresh** + **links** + **tabs** | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
 | Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler + **webhook/Slack** notifier (email/SMTP pending) | Lean Tokio scheduler (no Quartz) |
 
 ## AI / agentic
@@ -49,6 +49,7 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | API keys | ✅ | ✅ rotatable, SHA-256 hashed | — |
 | Mandatory auth | ✅ | ✅ `require_auth` middleware | — |
 | Terminal admin console | ⬜ | ✅ Ratatui TUI over the same API | Unique to GaussAnalytics |
+| Usage analytics | ✅ (enterprise) | ✅ `GET /api/usage` (queries/cards/dashboards/users) | — |
 | Audit logging | ✅ (enterprise) | 🟡 MCP/AI audit hooks | — |
 
 ## Where GaussAnalytics is *structurally* ahead
@@ -65,15 +66,15 @@ These are independent of the UI and benefit every screen:
 
 ## Honest gaps (tracked in `ROADMAP.md`)
 
-1. **Visualization breadth** — geographic **map** + combo charts (bar/line/area/
-   funnel/scatter/pie/pivot now exist).
-2. **Dashboard polish** — tabbed/nested dashboards (compose, shared filters,
-   drag-and-drop layout, cross-filtering, auto-refresh, and **dashboard-to-
-   dashboard linking** now exist).
-3. **SQL editor polish** — snippets + autocomplete (read-only-guarded editor
-   with **bound `{{variables}}`** now exists).
-4. **Subscription delivery** — **webhook/Slack** channel exists; email/SMTP +
-   a schedules UI remain.
+1. **Visualization breadth** — geographic **map** charts (bar/line/area/funnel/
+   scatter/**combo**/pie/pivot now exist).
+2. **Dashboard polish** — nested/cross-dashboard drill paths (compose, shared
+   filters, drag-and-drop layout, cross-filtering, auto-refresh, links, and
+   **tabs** now exist).
+3. **SQL editor polish** — inline autocomplete (bound `{{variables}}`, a
+   **schema browser**, and **snippets** now exist).
+4. **Subscription delivery** — **webhook/Slack** channel exists; native SMTP +
+   a schedules UI remain (email is reachable today via an HTTP email API webhook).
 5. **Driver breadth** — Postgres/MySQL/SQLite ✅ + BigQuery/Snowflake/ClickHouse
    (dialects golden-tested; REST drivers integration-stage, live-test pending).
    Further long tail (Redshift, Databricks, …) per demand.

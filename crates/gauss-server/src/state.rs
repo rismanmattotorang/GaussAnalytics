@@ -9,6 +9,22 @@ use gauss_nl2sql::{HttpNl2Sql, Nl2SqlPipeline};
 
 use crate::cache::ResultCache;
 
+/// Lightweight usage analytics: how many queries the instance has executed.
+#[derive(Default)]
+pub struct UsageStats {
+    queries: std::sync::atomic::AtomicU64,
+}
+
+impl UsageStats {
+    pub fn record_query(&self) {
+        self.queries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    pub fn queries_run(&self) -> u64 {
+        self.queries.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Cloneable handle to all shared services. `Clone` is cheap — everything is an
 /// `Arc` or `Option<Arc<_>>`.
 #[derive(Clone)]
@@ -17,6 +33,8 @@ pub struct AppState {
     pub store: Arc<dyn Store>,
     /// Query-result cache (no-op when the configured TTL is zero).
     pub cache: Arc<ResultCache>,
+    /// Process-lifetime usage analytics.
+    pub usage: Arc<UsageStats>,
     /// Present only when the MCP integration is enabled in config.
     pub mcp: Option<Arc<dyn McpGateway>>,
     /// Present only when the NL2SQL integration is enabled in config.
@@ -51,6 +69,7 @@ impl AppState {
             config: Arc::new(config),
             store,
             cache,
+            usage: Arc::new(UsageStats::default()),
             mcp,
             nl2sql,
         })

@@ -175,13 +175,20 @@ Delivered (compiling + tested):
 - [x] **Dashboard-to-dashboard linking** — dashboards carry `links`; the UI
       renders link buttons + a link picker in the editor.
 
+- [x] **Combo charts** (bar + line over `label, m1, m2`) in the result picker.
+- [x] **Tabbed dashboards** — dashboards carry named tabs; the open board
+      renders a tab bar and shows each tab's cards.
+- [x] **SQL-editor schema browser + snippets** — click tables/columns to insert;
+      snippet presets.
+- [x] **Usage analytics** — `GET /api/usage` (queries run + content/user counts).
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
-- [ ] Geographic **map** + combo charts; tabbed/nested dashboards.
-- [ ] SQL-editor snippets + autocomplete; email/SMTP delivery + schedules UI.
+- [ ] Geographic **map** charts; inline SQL autocomplete; a schedules UI.
+- [ ] Native **SMTP** email channel (email works today via an HTTP email-API webhook).
 - [ ] Live-validate BigQuery/Snowflake/ClickHouse drivers; add Redshift, etc.
-- [ ] Enterprise breadth: models/metrics layer, row-level security UI, usage
-      analytics, content versioning.
+- [ ] Enterprise breadth: models/metrics layer, row-level-security UI,
+      content versioning.
 - [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).
