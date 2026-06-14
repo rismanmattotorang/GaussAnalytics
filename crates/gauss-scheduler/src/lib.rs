@@ -41,6 +41,42 @@ impl Notifier for LogNotifier {
     }
 }
 
+/// The JSON payload posted to a webhook. The `text` field is what Slack (and
+/// most generic) incoming webhooks render.
+pub fn webhook_payload(subject: &str, body: &str) -> serde_json::Value {
+    serde_json::json!({
+        "text": format!("{subject}: {body}"),
+        "subject": subject,
+        "body": body,
+    })
+}
+
+/// A notifier that POSTs alerts to a webhook URL (Slack incoming webhooks or any
+/// generic JSON webhook). Failures are logged, not propagated.
+pub struct WebhookNotifier {
+    client: reqwest::Client,
+    url: String,
+}
+
+impl WebhookNotifier {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            url: url.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl Notifier for WebhookNotifier {
+    async fn notify(&self, subject: &str, body: &str) {
+        let payload = webhook_payload(subject, body);
+        if let Err(e) = self.client.post(&self.url).json(&payload).send().await {
+            tracing::warn!(target: "gauss::alert", "webhook delivery failed: {e}");
+        }
+    }
+}
+
 struct Entry {
     name: String,
     interval: Duration,
@@ -153,6 +189,16 @@ mod tests {
             self.runs.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    #[test]
+    fn webhook_payload_includes_text_for_slack() {
+        let p = webhook_payload("Alert: too-many-errors", "5 rows matched");
+        assert_eq!(
+            p["text"].as_str().unwrap(),
+            "Alert: too-many-errors: 5 rows matched"
+        );
+        assert_eq!(p["subject"].as_str().unwrap(), "Alert: too-many-errors");
     }
 
     #[tokio::test]

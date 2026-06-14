@@ -33,6 +33,7 @@ export function Dashboards({ token }: { token: string | null }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [params, setParams] = useState<DashboardParameter[]>([]);
   const [bindings, setBindings] = useState<ParamBinding[]>([]);
+  const [links, setLinks] = useState<string[]>([]);
 
   function load() {
     Promise.all([api.dashboards(), api.cards()])
@@ -102,6 +103,7 @@ export function Dashboards({ token }: { token: string | null }) {
           parameters: open.parameters,
           bindings: open.bindings,
           layout: layout.map((l) => ({ card_id: l.card_id, w: l.w })),
+          links: open.links,
         },
         token,
       );
@@ -114,6 +116,9 @@ export function Dashboards({ token }: { token: string | null }) {
   // --- create-form helpers ---
   function toggle(id: string) {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  }
+  function toggleLink(id: string) {
+    setLinks((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
   }
   function addParam() {
     setParams((p) => [...p, { name: "", kind: "text" }]);
@@ -134,11 +139,15 @@ export function Dashboards({ token }: { token: string | null }) {
     if (!token || !name) return;
     setError(null);
     try {
-      await api.createDashboard({ name, card_ids: selected, parameters: params, bindings }, token);
+      await api.createDashboard(
+        { name, card_ids: selected, parameters: params, bindings, links },
+        token,
+      );
       setName("");
       setSelected([]);
       setParams([]);
       setBindings([]);
+      setLinks([]);
       load();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -182,6 +191,19 @@ export function Dashboards({ token }: { token: string | null }) {
             </button>
           )}
         </div>
+        {(open.links ?? []).length > 0 && (
+          <div className="dash__bar">
+            <span className="muted">Linked:</span>
+            {open.links!.map((id) => {
+              const d = dashboards.find((x) => x.id === id);
+              return (
+                <button key={id} className="link" onClick={() => d && openDash(d)} disabled={!d}>
+                  {d?.name ?? "(unknown)"}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <p className="muted">
           Tip: click a category to cross-filter{token ? "; drag tiles to reorder" : ""}.
         </p>
@@ -322,6 +344,24 @@ export function Dashboards({ token }: { token: string | null }) {
                   />
                 </div>
               ))}
+            </>
+          )}
+
+          {dashboards.length > 0 && (
+            <>
+              <p className="muted">Linked dashboards</p>
+              <div className="chips">
+                {dashboards.map((d) => (
+                  <label key={d.id} className="chip">
+                    <input
+                      type="checkbox"
+                      checked={links.includes(d.id)}
+                      onChange={() => toggleLink(d.id)}
+                    />
+                    {d.name}
+                  </label>
+                ))}
+              </div>
             </>
           )}
 

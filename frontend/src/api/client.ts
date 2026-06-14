@@ -156,6 +156,7 @@ export interface Dashboard {
   parameters?: DashboardParameter[];
   bindings?: ParamBinding[];
   layout?: CardLayout[];
+  links?: string[];
 }
 
 export interface DashboardCardResult {
@@ -201,10 +202,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ database_id, query }),
     }),
-  native: (database_id: string, sql: string) =>
+  native: (database_id: string, sql: string, params: unknown[] = []) =>
     request<QueryResult>("/dataset/native", {
       method: "POST",
-      body: JSON.stringify({ database_id, sql }),
+      body: JSON.stringify({ database_id, sql, params }),
     }),
   nl2sql: (database_id: string, prompt: string) =>
     request<GuardedQuery>("/nl2sql", {
@@ -229,6 +230,7 @@ export const api = {
       card_ids: string[];
       parameters?: DashboardParameter[];
       bindings?: ParamBinding[];
+      links?: string[];
     },
     token: string,
   ) => authed<Dashboard>("/dashboards", "POST", token, body),
@@ -245,6 +247,7 @@ export const api = {
       parameters?: DashboardParameter[];
       bindings?: ParamBinding[];
       layout?: CardLayout[];
+      links?: string[];
     },
     token: string,
   ) => authed<Dashboard>(`/dashboards/${id}`, "PUT", token, body),

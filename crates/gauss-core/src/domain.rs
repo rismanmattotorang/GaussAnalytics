@@ -235,4 +235,7 @@ pub struct Dashboard {
     /// Saved drag-and-drop layout (order + per-card width). Empty = default grid.
     #[serde(default)]
     pub layout: Vec<CardLayout>,
+    /// Other dashboards linked from this one (dashboard-to-dashboard navigation).
+    #[serde(default)]
+    pub links: Vec<Uuid>,
 }

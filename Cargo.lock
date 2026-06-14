@@ -765,6 +765,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "gauss-core",
+ "reqwest",
+ "serde_json",
  "tokio",
  "tracing",
 ]

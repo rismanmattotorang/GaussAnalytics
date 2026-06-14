@@ -166,11 +166,22 @@ Delivered (compiling + tested):
       Drivers are integration-stage (compiling + wired; `#[ignore]` live tests
       gated on `GAUSS_TEST_{BIGQUERY,SNOWFLAKE,CLICKHOUSE}_*`).
 
+- [x] **More chart types** — area, funnel, and scatter added to the result
+      chart picker (alongside bar/line/pie/pivot/table).
+- [x] **SQL-editor variables** — `{{name}}` tokens become **bound parameters**
+      (native endpoint accepts positional params; injection-proof).
+- [x] **Webhook/Slack subscription channel** — `WebhookNotifier` POSTs alerts
+      (Slack incoming-webhook compatible).
+- [x] **Dashboard-to-dashboard linking** — dashboards carry `links`; the UI
+      renders link buttons + a link picker in the editor.
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
-- [ ] More chart types (area/scatter/map/funnel/combo).
-- [ ] Tabbed/nested dashboards + dashboard-to-dashboard linking.
-- [ ] Live-validate BigQuery/Snowflake/ClickHouse drivers + add Redshift, etc.
+- [ ] Geographic **map** + combo charts; tabbed/nested dashboards.
+- [ ] SQL-editor snippets + autocomplete; email/SMTP delivery + schedules UI.
+- [ ] Live-validate BigQuery/Snowflake/ClickHouse drivers; add Redshift, etc.
+- [ ] Enterprise breadth: models/metrics layer, row-level security UI, usage
+      analytics, content versioning.
 - [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).

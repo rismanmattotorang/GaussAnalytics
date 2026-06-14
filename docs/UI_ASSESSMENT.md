@@ -17,13 +17,13 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | Connect a database | ✅ | ✅ (register + sync via API/UI) | Drivers as a trait; parameterized everywhere |
 | Browse schema / tables | ✅ | ✅ (synced tables + fields, semantic types) | Sync **fingerprints** columns + infers semantic type |
 | Visual query builder | ✅ rich | 🟡 source/table/fields, filter, summarize + group-by, limit | Builds **GQL**, compiled to bound SQL |
-| Native SQL editor | ✅ (allows writes/DDL) | ✅ **read-only-guarded** SQL editor | Writes/DDL/batching rejected *before* the DB; permission-checked + cached |
+| Native SQL editor | ✅ (allows writes/DDL) | ✅ **read-only-guarded** editor with **`{{variables}}`** | Writes/DDL/batching rejected *before* the DB; variables are bound params; cached |
 | Run + view results table | ✅ | ✅ | Async streaming-ready, cached |
-| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, pie, pivot** + chart picker | — |
+| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, area, funnel, scatter, pie, pivot** (map pending) | — |
 | Pivot tables | ✅ | ✅ pivot view on 3-column aggregates | Pure client transform over cached results |
 | Save questions | ✅ | ✅ | Persisted via generic content store |
-| Dashboards | ✅ drag-and-drop layout, filters, params | ✅ compose + **shared filters** + **drag-and-drop layout** + **cross-filter** + **auto-refresh** | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
-| Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler (no email/slack channels UI) | Lean Tokio scheduler (no Quartz) |
+| Dashboards | ✅ drag-and-drop layout, filters, params | ✅ compose + **shared filters** + **drag-and-drop layout** + **cross-filter** + **auto-refresh** + **dashboard links** | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
+| Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler + **webhook/Slack** notifier (email/SMTP pending) | Lean Tokio scheduler (no Quartz) |
 
 ## AI / agentic
 
@@ -65,13 +65,15 @@ These are independent of the UI and benefit every screen:
 
 ## Honest gaps (tracked in `ROADMAP.md`)
 
-1. **Visualization breadth** — area/scatter/map/funnel/combo charts.
-2. **Dashboard polish** — tabbed/nested dashboards and dashboard-to-dashboard
-   linking (compose, shared filters, **drag-and-drop layout, cross-filtering,
-   and auto-refresh** now exist).
-3. **SQL editor polish** — snippets, query variables/parameters, autocomplete
-   (the read-only-guarded editor itself now exists).
-4. **Subscription delivery** — email/Slack channels and schedules UI.
+1. **Visualization breadth** — geographic **map** + combo charts (bar/line/area/
+   funnel/scatter/pie/pivot now exist).
+2. **Dashboard polish** — tabbed/nested dashboards (compose, shared filters,
+   drag-and-drop layout, cross-filtering, auto-refresh, and **dashboard-to-
+   dashboard linking** now exist).
+3. **SQL editor polish** — snippets + autocomplete (read-only-guarded editor
+   with **bound `{{variables}}`** now exists).
+4. **Subscription delivery** — **webhook/Slack** channel exists; email/SMTP +
+   a schedules UI remain.
 5. **Driver breadth** — Postgres/MySQL/SQLite ✅ + BigQuery/Snowflake/ClickHouse
    (dialects golden-tested; REST drivers integration-stage, live-test pending).
    Further long tail (Redshift, Databricks, …) per demand.
