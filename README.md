@@ -144,14 +144,15 @@ docs/                 strategy, architecture, roadmap, ADRs
 
 ## Status
 
-GaussAnalytics is in active development. **Phases 0 and 1** are complete and
-**Phase 2 is well underway**: persistent storage (`sqlx`, SQLite **and
-Postgres**, with migrations), data-source drivers that **execute queries and
-discover schema**, authentication (login/sessions + permission gating),
-admin-gated **data-source management endpoints**, and an admin **TUI that reads
-live data** from the server. `cargo test --workspace` is green;
+GaussAnalytics is in active development. **Phases 0, 1, and 2 are complete**:
+persistent storage (`sqlx`, **SQLite / Postgres / MySQL**, with migrations),
+data-source drivers that **execute queries, discover schema, and fingerprint
+columns**, authentication (sessions, **persisted per-user grants**, mandatory-auth
+middleware, **rotatable API keys**), data-source management endpoints, a
+**differential-testing harness**, a **contract-compatibility suite**, and an
+admin **TUI that reads live data**. `cargo test --workspace` is green;
 `gaussctl serve`/`migrate`/`admin` all work. See the [Roadmap](docs/ROADMAP.md)
-for what's next (MySQL, scheduling, embedding, and deeper AI).
+for Phase 3+ (scheduling/alerts, embedding, caching, deeper agentic AI).
 
 ## Development
 

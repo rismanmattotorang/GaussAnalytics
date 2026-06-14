@@ -44,9 +44,9 @@ and a runnable artifact. Phases 0 and 1 are delivered in this changeset.
 
 ---
 
-## Phase 2 — Persistence, drivers, real auth (in progress)
+## Phase 2 — Persistence, drivers, real auth ✅ (complete)
 
-Scaffolded in this changeset (compiling + tested):
+Delivered (compiling + tested):
 
 - [x] `gauss-db` on `sqlx` (SQLite) with SQL migrations + `gaussctl migrate`;
       `SqliteStore` implements the same repository traits as the in-memory store.
@@ -76,12 +76,26 @@ Scaffolded in this changeset (compiling + tested):
       except a small public set, plus static **service API keys**
       (`GAUSS_API_KEYS`, constant-time compare → service-admin principal).
 
-Remaining for Phase 2:
+- [x] **Fingerprinting + semantic typing** during sync: `Driver::fingerprint`
+      computes per-column value stats (rows/nulls/distinct); sync infers a
+      `SemanticType` (Category/Quantity/Temporal/Text/Key) and stores both.
+- [x] **Persisted per-user grants** (`permission_grants` table + endpoints
+      `GET/POST/DELETE /api/users/{id}/grants`); `authenticate` builds a
+      `PermissionSet` from stored grants. Read-path gating now honors them.
+- [x] **DB-backed rotatable API keys** (`api_keys` table, SHA-256 hashed;
+      `POST/GET /api/api-keys`, `POST /api/api-keys/{id}/revoke`); accepted via
+      `X-API-Key`/`Bearer` and resolved to the owning user's permissions.
+- [x] **Differential testing harness**: identical GQL executed by the SQLite
+      driver and an independent in-Rust reference evaluator must match (CI-run).
+- [x] **Contract-compatibility suite**: a server test exercises every endpoint
+      the reused frontend client depends on (status + JSON shape).
 
-- [ ] Fingerprinting (value stats) and richer semantic typing during sync.
-- [ ] Per-user/-database persisted grants + DB-backed (rotatable) API keys.
-- [ ] Differential testing harness (compare results across engines).
-- [ ] Contract-compatibility suite exercising the reused frontend client.
+**Exit criteria:** `cargo test --workspace` green; all three SQL backends
+implemented behind one set of traits; auth enforceable end-to-end.
+
+> Note: live Postgres/MySQL tests are `#[ignore]`d (need running servers); they
+> are compile-verified in CI. Provide `GAUSS_TEST_PG_URL` / `GAUSS_TEST_MYSQL_URL`
+> to run them.
 
 ---
 

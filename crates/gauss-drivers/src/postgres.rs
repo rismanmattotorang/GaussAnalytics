@@ -5,7 +5,7 @@
 //! running PostgreSQL and are `#[ignore]`d.
 
 use async_trait::async_trait;
-use gauss_core::domain::FieldType;
+use gauss_core::domain::{FieldType, Fingerprint};
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::{CompiledQuery, SqlParam};
 use serde_json::{json, Value as JsonValue};
@@ -104,6 +104,38 @@ impl Driver for PgDriver {
             tables.push(DiscoveredTable { name, columns });
         }
         Ok(tables)
+    }
+
+    async fn fingerprint(
+        &self,
+        table: &str,
+        columns: &[String],
+    ) -> CoreResult<Vec<(String, Fingerprint)>> {
+        if columns.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = crate::fingerprint_sql(table, columns, |c| {
+            format!("\"{}\"", c.replace('"', "\"\""))
+        });
+        let row = sqlx::query(&sql)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(storage)?;
+        let total: i64 = row.try_get(0).map_err(storage)?;
+        let mut out = Vec::with_capacity(columns.len());
+        for (i, c) in columns.iter().enumerate() {
+            let nonnull: i64 = row.try_get(1 + 2 * i).map_err(storage)?;
+            let distinct: i64 = row.try_get(2 + 2 * i).map_err(storage)?;
+            out.push((
+                c.clone(),
+                Fingerprint {
+                    total_rows: total,
+                    null_count: total - nonnull,
+                    distinct_count: distinct,
+                },
+            ));
+        }
+        Ok(out)
     }
 }
 

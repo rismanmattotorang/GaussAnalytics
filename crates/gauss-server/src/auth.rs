@@ -9,7 +9,7 @@ use crate::state::AppState;
 use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
 use chrono::Utc;
-use gauss_auth::{verify_password, PermissionSet, Role, Session};
+use gauss_auth::{verify_password, PermissionSet, Session};
 use gauss_core::domain::User;
 use gauss_core::error::{CoreError, CoreResult};
 use uuid::Uuid;
@@ -83,11 +83,25 @@ fn service_principal() -> CurrentUser {
 /// administrator; otherwise a session bearer token is required.
 pub async fn authenticate(state: &AppState, headers: &HeaderMap) -> CoreResult<CurrentUser> {
     if let Some(key) = presented_api_key(headers) {
+        // 1. Static service key (from configuration) → service administrator.
         if api_key_valid(state, &key) {
             return Ok(service_principal());
         }
+        // 2. DB-backed API key → its owning user (with that user's grants).
+        let hash = gauss_auth::hash_api_key(&key);
+        if let Some(user_id) = state.store.api_key_user(&hash).await? {
+            if let Some(user) = state.store.user_by_id(user_id).await? {
+                let perms = perms_for_user(state, &user).await?;
+                return Ok(CurrentUser {
+                    user,
+                    perms,
+                    token: String::new(),
+                });
+            }
+        }
     }
 
+    // 3. Session bearer token.
     let token = bearer_token(headers)
         .ok_or_else(|| CoreError::Unauthorized("missing bearer token".into()))?;
 
@@ -107,15 +121,21 @@ pub async fn authenticate(state: &AppState, headers: &HeaderMap) -> CoreResult<C
         .await?
         .ok_or_else(|| CoreError::Unauthorized("session user no longer exists".into()))?;
 
-    // Until per-entity grants are persisted, admins get everything and other
-    // users get the Viewer baseline.
-    let perms = if user.is_admin {
-        PermissionSet::admin()
-    } else {
-        PermissionSet::for_role(Role::Viewer)
-    };
-
+    let perms = perms_for_user(state, &user).await?;
     Ok(CurrentUser { user, perms, token })
+}
+
+/// Build a [`PermissionSet`] for `user`: administrators hold everything; other
+/// users get their persisted grants.
+pub async fn perms_for_user(state: &AppState, user: &User) -> CoreResult<PermissionSet> {
+    if user.is_admin {
+        return Ok(PermissionSet::admin());
+    }
+    let mut set = PermissionSet::empty();
+    for perm in state.store.grants_for(user.id).await? {
+        set.grant(perm);
+    }
+    Ok(set)
 }
 
 /// Verify credentials and create + persist a new session.

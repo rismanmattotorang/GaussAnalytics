@@ -58,12 +58,85 @@ pub enum FieldType {
     Unknown,
 }
 
+/// A higher-level, usage-oriented classification inferred during sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticType {
+    /// Low-cardinality values suited to grouping/filtering.
+    Category,
+    /// A measure to aggregate.
+    Quantity,
+    /// A date/time dimension.
+    Temporal,
+    /// Free-form text.
+    Text,
+    /// An identifier/key.
+    Key,
+    Unknown,
+}
+
+/// Value statistics computed for a column during sync (a "fingerprint").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fingerprint {
+    pub total_rows: i64,
+    pub null_count: i64,
+    pub distinct_count: i64,
+}
+
 /// A column within a [`Table`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Field {
     pub id: Uuid,
     pub name: String,
     pub field_type: FieldType,
+    /// Inferred semantic type (populated by sync fingerprinting).
+    #[serde(default)]
+    pub semantic_type: Option<SemanticType>,
+    /// Value statistics (populated by sync fingerprinting).
+    #[serde(default)]
+    pub fingerprint: Option<Fingerprint>,
+}
+
+impl Field {
+    /// Construct a field with no semantic profile yet.
+    pub fn new(name: impl Into<String>, field_type: FieldType) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            field_type,
+            semantic_type: None,
+            fingerprint: None,
+        }
+    }
+}
+
+/// Infer a [`SemanticType`] from a column's declared type and value statistics.
+pub fn infer_semantic_type(field_type: FieldType, fp: &Fingerprint) -> SemanticType {
+    let non_null = (fp.total_rows - fp.null_count).max(0);
+    match field_type {
+        FieldType::DateTime => SemanticType::Temporal,
+        FieldType::Boolean => SemanticType::Category,
+        FieldType::Integer | FieldType::Float => {
+            if fp.distinct_count > 0 && fp.distinct_count <= 12 {
+                SemanticType::Category
+            } else {
+                SemanticType::Quantity
+            }
+        }
+        FieldType::Text => {
+            // Mostly-unique text behaves like a key; low-cardinality is a category.
+            if non_null > 0 && fp.distinct_count == non_null {
+                SemanticType::Key
+            } else if fp.distinct_count > 0
+                && (fp.distinct_count as f64) <= (non_null as f64 * 0.1).max(20.0)
+            {
+                SemanticType::Category
+            } else {
+                SemanticType::Text
+            }
+        }
+        FieldType::Unknown => SemanticType::Unknown,
+    }
 }
 
 /// A table discovered within a [`Database`].
