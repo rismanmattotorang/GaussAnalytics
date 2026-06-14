@@ -200,6 +200,65 @@ label {
   color: var(--ok);
 }
 
+.result__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.viz-pick .link[data-active="true"] {
+  text-decoration: underline;
+  font-weight: 700;
+}
+.linechart {
+  width: 100%;
+  height: 160px;
+  background: #0f1530;
+  border-radius: 8px;
+}
+.pie {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+.pie__legend {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.pie__legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pie__swatch {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 3px;
+  display: inline-block;
+}
+.dash__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+.dash__tile {
+  background: #0f1530;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+.dash__tile h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+.dash__new {
+  margin-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 1rem;
+}
+
 .app__brand {
   font-size: 2.4rem;
   margin: 0;

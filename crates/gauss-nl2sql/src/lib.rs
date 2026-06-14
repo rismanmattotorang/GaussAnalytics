@@ -30,11 +30,21 @@ pub struct SchemaContext {
     pub tables: Vec<TableContext>,
 }
 
+/// One prior exchange in a multi-turn NL2SQL conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Turn {
+    pub prompt: String,
+    pub sql: String,
+}
+
 /// A natural-language translation request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Nl2SqlRequest {
     pub prompt: String,
     pub context: SchemaContext,
+    /// Prior turns, enabling multi-turn refinement and clarifying follow-ups.
+    #[serde(default)]
+    pub history: Vec<Turn>,
 }
 
 /// The raw candidate returned by the model.
@@ -154,6 +164,7 @@ mod tests {
                     columns: vec![("total".into(), "float".into())],
                 }],
             },
+            history: vec![],
         }
     }
 

@@ -1,0 +1,84 @@
+# Web UI assessment: GaussAnalytics vs. Metabase
+
+> **Owner:** Gaussian Technologies · **Status:** honest, living scorecard
+
+This is a frank, feature-by-feature comparison of the GaussAnalytics web UI
+against Metabase, the category-leading open-source BI tool. The goal is an
+accurate picture — **not** a claim of total parity. Where GaussAnalytics is
+behind on UI breadth, it is recorded as such; where it is ahead (almost always
+on the **backend/engine** that powers the UI), that is noted too.
+
+Legend: ✅ covered · 🟡 partial · ⬜ not yet.
+
+## Core analytics loop
+
+| Capability | Metabase | GaussAnalytics | Backend edge (Rust) |
+|---|---|---|---|
+| Connect a database | ✅ | ✅ (register + sync via API/UI) | Drivers as a trait; parameterized everywhere |
+| Browse schema / tables | ✅ | ✅ (synced tables + fields, semantic types) | Sync **fingerprints** columns + infers semantic type |
+| Visual query builder | ✅ rich | 🟡 source/table/fields, filter, summarize + group-by, limit | Builds **GQL**, compiled to bound SQL |
+| Native SQL editor | ✅ | 🟡 compile/run a query; no in-UI SQL editor yet | NL2SQL output is read-only-guardrailed |
+| Run + view results table | ✅ | ✅ | Async streaming-ready, cached |
+| Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, pie** + chart picker | — |
+| Pivot tables | ✅ | ⬜ | — |
+| Save questions | ✅ | ✅ | Persisted via generic content store |
+| Dashboards | ✅ drag-and-drop layout, filters, params | 🟡 create from saved cards + grid view that runs them | — |
+| Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler (no email/slack channels UI) | Lean Tokio scheduler (no Quartz) |
+
+## AI / agentic
+
+| Capability | Metabase | GaussAnalytics | Edge |
+|---|---|---|---|
+| Natural-language → SQL | ✅ (Metabot) | ✅ panel, **multi-turn** history | **Governed**: schema-grounded, read-only-guardrailed, runs under user perms |
+| Agentic tool use (MCP) | ⬜ (not a core MB feature) | ✅ MCP gateway + **chained workflow** endpoint | Policy allow-list + full audit |
+
+## Sharing / embedding
+
+| Capability | Metabase | GaussAnalytics | Edge |
+|---|---|---|---|
+| Public links | ✅ | 🟡 (embed tokens cover this pattern) | — |
+| Signed embedding | ✅ | ✅ HMAC-SHA256 tokens | Stateless, constant-time verified |
+| Content export/import | ✅ (serialization) | ✅ portable JSON bundles | One generic content store |
+
+## Administration / governance
+
+| Capability | Metabase | GaussAnalytics | Edge |
+|---|---|---|---|
+| Users & roles | ✅ | ✅ users + value-based permissions | Permission discharge is a typed step |
+| Persisted, scoped permissions | ✅ | ✅ per-user/per-database grants | — |
+| API keys | ✅ | ✅ rotatable, SHA-256 hashed | — |
+| Mandatory auth | ✅ | ✅ `require_auth` middleware | — |
+| Terminal admin console | ⬜ | ✅ Ratatui TUI over the same API | Unique to GaussAnalytics |
+| Audit logging | ✅ (enterprise) | 🟡 MCP/AI audit hooks | — |
+
+## Where GaussAnalytics is *structurally* ahead
+
+These are independent of the UI and benefit every screen:
+
+- **Engine in Rust**: parameterized SQL by construction (SQL injection is
+  impossible, not mitigated); GQL→SQL compiles at **~500k queries/sec/core**.
+- **No GC / single static binary**: predictable latency, small footprint, fast
+  cold start vs. a JVM deployment.
+- **Governed AI by default**: NL2SQL and MCP run under the caller's permissions
+  with audit — not bolted on.
+- **Operability**: a fast terminal admin console in addition to the web UI.
+
+## Honest gaps (tracked in `ROADMAP.md`)
+
+1. **Visualization breadth** — area/scatter/map/funnel/combo + **pivot tables**.
+2. **Dashboard editor** — drag-and-drop layout, dashboard-level filters/params,
+   cross-filtering, auto-refresh.
+3. **Native SQL editor** in the UI (with snippets, variables).
+4. **Subscription delivery** — email/Slack channels and schedules UI.
+5. **Driver breadth** — BigQuery, Snowflake, Redshift, ClickHouse, etc.
+6. **Models / metrics layer**, **data sandboxing / row-level security UI**,
+   **usage analytics**, and **content versioning**.
+
+## Bottom line
+
+GaussAnalytics covers the **core BI loop end-to-end** (connect → explore →
+visualize → save → dashboard → embed → alert → export) on a backend that is
+materially faster, safer, and more governable than Metabase's. It does **not
+yet** match Metabase's *visualization and dashboard-editing breadth* or its long
+tail of enterprise UI features. Closing that UI breadth — on top of the superior
+Rust engine — is the explicit focus of the remaining roadmap.

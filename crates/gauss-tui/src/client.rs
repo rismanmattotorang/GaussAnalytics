@@ -30,6 +30,12 @@ pub struct UserRow {
     pub is_admin: bool,
 }
 
+/// A named content row (card or dashboard) — extra fields are ignored.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NamedRow {
+    pub name: String,
+}
+
 /// A blocking client bound to a server base URL and optional admin token.
 pub struct ApiClient {
     base: String,
@@ -85,5 +91,13 @@ impl ApiClient {
 
     pub fn users(&self) -> Result<Vec<UserRow>, String> {
         self.get("/api/users")
+    }
+
+    pub fn cards(&self) -> Result<Vec<NamedRow>, String> {
+        self.get("/api/cards")
+    }
+
+    pub fn dashboards(&self) -> Result<Vec<NamedRow>, String> {
+        self.get("/api/dashboards")
     }
 }

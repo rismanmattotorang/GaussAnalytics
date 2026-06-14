@@ -134,13 +134,24 @@ Delivered (compiling + tested):
 - [x] **Performance harness** (`cargo run -p gauss-query --example
       bench_compile`) + **`deny.toml`** supply-chain policy for `cargo deny`.
 
-Remaining for Phase 4:
+- [x] **Multi-turn NL2SQL** — requests carry prior turns (`history`) for
+      refinement/clarification; threaded through the pipeline + API.
+- [x] **MCP agent workflows** — `POST /api/mcp/workflow` chains tool calls,
+      each policy-checked + audited, stop-on-error; auth-gated.
+- [x] **Richer visualizations** — table + **bar / line / pie** with a chart
+      picker; **dashboards** view (build from saved cards + run them in a grid).
+- [x] **SBOM + supply chain in CI** — `cargo metadata` SBOM artifact + a
+      `cargo-deny` job; frontend **vitest** tests run in CI.
+- [x] **TUI parity** — content (cards/dashboards) counts surfaced in the console.
 
-- [ ] Deepen NL2SQL governance: clarifying questions, multi-turn, lineage.
-- [ ] MCP agent workflows (tool chaining under policy + audit).
-- [ ] Richer visualizations (line/area/pie, pivot) + dashboard layout editor.
-- [ ] SBOM emission + `cargo deny`/`cargo audit` wired into CI.
-- [ ] TUI feature parity for the new content surfaces.
+Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
+
+- [ ] Pivot tables + more chart types (area/scatter/map/funnel/combo).
+- [ ] Drag-and-drop dashboard layout editor, dashboard filters/params.
+- [ ] In-UI native SQL editor; models/metrics layer.
+- [ ] Subscription delivery channels (email/Slack) UI.
+- [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).
+- [ ] Make `cargo-deny` a required CI gate once the advisory baseline is clean.
 
 ---
 

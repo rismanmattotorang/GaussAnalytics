@@ -33,8 +33,29 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: SBOM (cargo metadata)
+        run: cargo metadata --format-version 1 --locked > sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  supply-chain:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        # Advisory feeds drift; surface findings without blocking merges yet.
+        continue-on-error: true
+        with:
+          command: check
+
   frontend:
-    name: Frontend (typecheck · build)
+    name: Frontend (typecheck · test · build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,6 +76,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Build
         run: pnpm run build
