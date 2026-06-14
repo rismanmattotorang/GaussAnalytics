@@ -83,13 +83,48 @@ pub trait ApiKeyRepository: Send + Sync {
     async fn revoke_api_key(&self, id: Uuid) -> CoreResult<()>;
 }
 
+/// A stored unit of analytical content (collection, card, or dashboard). The
+/// typed payload lives in `body_json`, so one table backs every content type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentRecord {
+    pub id: Uuid,
+    /// `"collection"`, `"card"`, or `"dashboard"`.
+    pub kind: String,
+    pub collection_id: Option<Uuid>,
+    pub name: String,
+    pub body_json: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Persistence for analytical content. Enables saved questions, dashboards,
+/// collections, and content export/import.
+#[async_trait]
+pub trait ContentRepository: Send + Sync {
+    /// Insert or replace a content record (by id).
+    async fn put_content(&self, record: ContentRecord) -> CoreResult<()>;
+    async fn get_content(&self, id: Uuid) -> CoreResult<Option<ContentRecord>>;
+    /// All content of a given kind, newest first.
+    async fn list_content(&self, kind: &str) -> CoreResult<Vec<ContentRecord>>;
+    async fn delete_content(&self, id: Uuid) -> CoreResult<()>;
+}
+
 /// The full application store: the union of all repositories. The server holds
 /// one `Arc<dyn Store>`.
 pub trait Store:
-    UserRepository + DatabaseRepository + SessionRepository + GrantRepository + ApiKeyRepository
+    UserRepository
+    + DatabaseRepository
+    + SessionRepository
+    + GrantRepository
+    + ApiKeyRepository
+    + ContentRepository
 {
 }
 impl<T> Store for T where
-    T: UserRepository + DatabaseRepository + SessionRepository + GrantRepository + ApiKeyRepository
+    T: UserRepository
+        + DatabaseRepository
+        + SessionRepository
+        + GrantRepository
+        + ApiKeyRepository
+        + ContentRepository
 {
 }

@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod cache;
+pub mod content;
 pub mod error;
 pub mod jobs;
 pub mod state;
@@ -67,6 +68,29 @@ pub fn router(state: AppState) -> Router {
         .route("/databases/{id}/tables", get(list_database_tables))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
+        .route(
+            "/collections",
+            get(content::list_collections).post(content::create_collection),
+        )
+        .route(
+            "/cards",
+            get(content::list_cards).post(content::create_card),
+        )
+        .route(
+            "/cards/{id}",
+            get(content::get_card).delete(content::delete_card),
+        )
+        .route("/cards/{id}/run", post(content::run_card))
+        .route(
+            "/dashboards",
+            get(content::list_dashboards).post(content::create_dashboard),
+        )
+        .route(
+            "/dashboards/{id}",
+            get(content::get_dashboard).delete(content::delete_dashboard),
+        )
+        .route("/export", get(content::export_content))
+        .route("/import", post(content::import_content))
         .route("/embed/token", post(embed_token))
         .route("/embed/resolve", get(embed_resolve))
         .route("/nl2sql", post(nl2sql_translate))
@@ -451,9 +475,9 @@ async fn list_database_tables(
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-struct CompileRequest {
-    database_id: Uuid,
-    query: Query,
+pub(crate) struct CompileRequest {
+    pub(crate) database_id: Uuid,
+    pub(crate) query: Query,
 }
 
 /// Authorize, ground against metadata, and compile a request to SQL.
@@ -462,7 +486,7 @@ struct CompileRequest {
 /// session, read permission on the target database is enforced; anonymous calls
 /// remain open in this scaffold (Phase 2 makes auth mandatory once per-database
 /// grants are persisted).
-async fn prepare_query(
+pub(crate) async fn prepare_query(
     st: &AppState,
     headers: &HeaderMap,
     req: &CompileRequest,
@@ -505,19 +529,19 @@ async fn compile_dataset(
     Ok(Json(compiled))
 }
 
-/// Compile *and execute* a GQL query against its connected data source,
-/// returning the resulting rows.
-async fn run_dataset(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<CompileRequest>,
-) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
-    let (db, compiled) = prepare_query(&st, &headers, &req).await?;
+/// Authorize, compile, and execute a query, using the result cache. Shared by
+/// the dataset-run endpoint and saved-question (card) execution.
+pub(crate) async fn execute_query(
+    st: &AppState,
+    headers: &HeaderMap,
+    req: &CompileRequest,
+) -> Result<gauss_drivers::QueryResult, ApiError> {
+    let (db, compiled) = prepare_query(st, headers, req).await?;
 
     // Serve from the result cache when warm.
     let key = cache::cache_key(db.id, &compiled);
     if let Some(hit) = st.cache.get(&key) {
-        return Ok(Json(hit));
+        return Ok(hit);
     }
 
     let uri = db.connection_uri.ok_or_else(|| {
@@ -529,7 +553,16 @@ async fn run_dataset(
     let driver = gauss_drivers::connect(db.kind, &uri).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
-    Ok(Json(result))
+    Ok(result)
+}
+
+/// Compile *and execute* a GQL query against its connected data source.
+async fn run_dataset(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CompileRequest>,
+) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
+    Ok(Json(execute_query(&st, &headers, &req).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,6 +1201,77 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn card_create_run_list_and_export() {
+        use axum::extract::Path;
+        // Real SQLite source with data.
+        let path = std::env::temp_dir().join(format!("gauss_card_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (total) VALUES (1.0),(2.0)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        let store = Arc::new(InMemoryStore::new());
+        let db = Database {
+            id: Uuid::new_v4(),
+            name: "sales".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: true,
+            connection_uri: Some(uri),
+            created_at: Utc::now(),
+        };
+        let db_id = db.id;
+        store.create_database(db.clone()).await.unwrap();
+        jobs::sync_one(&(store.clone() as Arc<dyn Store>), &db)
+            .await
+            .unwrap();
+        ensure_admin(store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let st = AppState::new(AppConfig::default(), store).unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Create a saved question.
+        let mut q = Query::new("orders");
+        q.fields = vec!["id".into(), "total".into()];
+        let card = content::create_card(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::CreateCardRequest {
+                name: "All orders".into(),
+                database_id: db_id,
+                query: q,
+                collection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let card_id = card.0.id;
+
+        // Run it.
+        let run = content::run_card(State(st.clone()), Path(card_id), hdr.clone())
+            .await
+            .unwrap();
+        assert_eq!(run.0.rows.len(), 2);
+
+        // List + export.
+        let list = content::list_cards(State(st.clone())).await.unwrap();
+        assert_eq!(list.0.len(), 1);
+        let bundle = content::export_content(State(st), hdr).await.unwrap();
+        assert_eq!(bundle.0.cards.len(), 1);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]

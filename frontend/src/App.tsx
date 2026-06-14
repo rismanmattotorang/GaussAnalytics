@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, type Database, type Health } from "./api/client";
+import { QueryBuilder } from "./components/QueryBuilder";
+import { SavedQuestions } from "./components/SavedQuestions";
+import { NlAsk } from "./components/NlAsk";
+
+type View = "explore" | "saved" | "ask";
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [databases, setDatabases] = useState<Database[]>([]);
+  const [view, setView] = useState<View>("explore");
+  const [token, setToken] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -15,44 +24,76 @@ export default function App() {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
+  async function login() {
+    setError(null);
+    try {
+      const session = await api.login(email, password);
+      setToken(session.token);
+      setPassword("");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
     <main className="app">
       <header className="app__header">
-        <h1 className="app__brand">GaussAnalytics</h1>
-        <p className="app__tagline">
-          Fast, secure, AI-native BI — by Gaussian Technologies
-        </p>
-        {health && (
-          <span className="app__status" data-status={health.status}>
-            {health.status} · v{health.version}
-          </span>
-        )}
+        <div>
+          <h1 className="app__brand">GaussAnalytics</h1>
+          <p className="app__tagline">Fast, secure, AI-native BI — by Gaussian Technologies</p>
+        </div>
+        <div className="app__session">
+          {health && (
+            <span className="app__status" data-status={health.status}>
+              {health.status} · v{health.version}
+            </span>
+          )}
+          {token ? (
+            <button className="link" onClick={() => setToken(null)}>
+              sign out
+            </button>
+          ) : (
+            <span className="login">
+              <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <input
+                placeholder="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button onClick={login} disabled={!email || !password}>
+                sign in
+              </button>
+            </span>
+          )}
+        </div>
       </header>
 
-      {error && <p className="app__error">Could not reach the API: {error}</p>}
+      <nav className="app__nav">
+        {(["explore", "saved", "ask"] as View[]).map((v) => (
+          <button key={v} className="tab" data-active={v === view} onClick={() => setView(v)}>
+            {v === "explore" ? "Explore" : v === "saved" ? "Saved questions" : "Ask (NL2SQL)"}
+          </button>
+        ))}
+      </nav>
+
+      {error && <p className="app__error">{error}</p>}
 
       <section className="app__panel">
-        <h2>Connected data sources</h2>
         {databases.length === 0 ? (
-          <p className="muted">No databases yet.</p>
+          <p className="muted">No data sources, or the API is unreachable.</p>
+        ) : view === "explore" ? (
+          <QueryBuilder databases={databases} token={token} />
+        ) : view === "saved" ? (
+          <SavedQuestions />
         ) : (
-          <ul className="db-list">
-            {databases.map((db) => (
-              <li key={db.id} className="db-list__item">
-                <span className="db-list__name">{db.name}</span>
-                <span className="db-list__kind">{db.kind}</span>
-                <span className="db-list__sync">
-                  {db.is_synced ? "synced" : "not synced"}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <NlAsk databases={databases} />
         )}
       </section>
 
       <footer className="app__footer muted">
-        The query builder, visualizations, and dashboards build on the typed
-        API client in <code>src/api/client.ts</code>.
+        Built on the typed API client in <code>src/api/client.ts</code> — the same
+        contract the Rust server and admin TUI speak.
       </footer>
     </main>
   );

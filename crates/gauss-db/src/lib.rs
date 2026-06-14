@@ -17,8 +17,8 @@ pub use memory::InMemoryStore;
 pub use mysql::MySqlStore;
 pub use postgres::PgStore;
 pub use repository::{
-    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
-    SessionRepository, Store, UserRepository,
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, ContentRecord, ContentRepository,
+    DatabaseRepository, GrantRepository, SessionRepository, Store, UserRepository,
 };
 pub use sqlite::{run_migrations, SqliteStore};
 

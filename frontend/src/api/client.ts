@@ -1,8 +1,8 @@
 // Typed client for the GaussAnalytics HTTP API.
 //
 // These types mirror the Rust server's JSON contract (see crates/gauss-server
-// and crates/gauss-core::gql). Keeping the contract in one place is what lets
-// the web UI and the Rust backend evolve independently.
+// and crates/gauss-core). Keeping the contract in one place is what lets the
+// web UI and the Rust backend evolve independently.
 
 export interface Health {
   status: string;
@@ -11,6 +11,14 @@ export interface Health {
 }
 
 export type DataSourceKind = "postgres" | "mysql" | "sqlite" | "generic";
+export type FieldType = "integer" | "float" | "text" | "boolean" | "datetime" | "unknown";
+export type SemanticType =
+  | "category"
+  | "quantity"
+  | "temporal"
+  | "text"
+  | "key"
+  | "unknown";
 
 export interface Database {
   id: string;
@@ -21,7 +29,21 @@ export interface Database {
   created_at: string;
 }
 
-// --- GQL: the structured query the UI builds and sends to /api/dataset/compile
+export interface Field {
+  id: string;
+  name: string;
+  field_type: FieldType;
+  semantic_type?: SemanticType | null;
+}
+
+export interface Table {
+  id: string;
+  database_id: string;
+  name: string;
+  fields: Field[];
+}
+
+// --- GQL: the structured query the UI builds ----------------------------
 
 export type Literal =
   | { kind: "int"; value: number }
@@ -34,9 +56,7 @@ export type CompareOp = "eq" | "ne" | "lt" | "le" | "gt" | "ge";
 
 export type Filter =
   | { type: "compare"; args: { field: string; op: CompareOp; value: Literal } }
-  | { type: "like"; args: { field: string; pattern: string; case_insensitive?: boolean } }
   | { type: "in"; args: { field: string; values: Literal[] } }
-  | { type: "between"; args: { field: string; low: Literal; high: Literal } }
   | { type: "is_null"; args: { field: string } }
   | { type: "is_not_null"; args: { field: string } }
   | { type: "and"; args: Filter[] }
@@ -78,16 +98,15 @@ export interface CompiledQuery {
   params: SqlParam[];
 }
 
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+}
+
 export interface GuardedQuery {
   sql: string;
   explanation?: string | null;
   confidence?: number | null;
-}
-
-/** The tabular result of executing a query against a data source. */
-export interface QueryResult {
-  columns: string[];
-  rows: unknown[][];
 }
 
 export interface Session {
@@ -95,11 +114,27 @@ export interface Session {
   expires_at: string;
 }
 
+export interface Card {
+  id: string;
+  name: string;
+  database_id: string;
+  query: Query;
+  created_at: string;
+}
+
+export interface Dashboard {
+  id: string;
+  name: string;
+  collection_id?: string | null;
+  card_ids: string[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  const res = await fetch(`/api${path}`, { ...init, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body.error ?? `request failed: ${res.status}`);
@@ -107,16 +142,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/// Authenticated request: merges a bearer token into the headers.
+function authed<T>(path: string, method: string, token: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
 export const api = {
   health: () => request<Health>("/health"),
   databases: () => request<Database[]>("/databases"),
-  compile: (database_id: string, query: Query) =>
-    request<CompiledQuery>("/dataset/compile", {
+  tables: (databaseId: string) => request<Table[]>(`/databases/${databaseId}/tables`),
+  run: (database_id: string, query: Query) =>
+    request<QueryResult>("/dataset/run", {
       method: "POST",
       body: JSON.stringify({ database_id, query }),
     }),
-  run: (database_id: string, query: Query) =>
-    request<QueryResult>("/dataset/run", {
+  compile: (database_id: string, query: Query) =>
+    request<CompiledQuery>("/dataset/compile", {
       method: "POST",
       body: JSON.stringify({ database_id, query }),
     }),
@@ -130,19 +175,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  createDatabase: (
-    body: { name: string; kind: DataSourceKind; connection_uri?: string },
+  cards: () => request<Card[]>("/cards"),
+  createCard: (
+    body: { name: string; database_id: string; query: Query },
     token: string,
-  ) =>
-    request<Database>("/databases", {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
-    }),
-  syncDatabase: (id: string, token: string) =>
-    request<{ database_id: string; tables: { name: string; columns: number }[] }>(
-      `/databases/${id}/sync`,
-      { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+  ) => authed<Card>("/cards", "POST", token, body),
+  runCard: (id: string) => request<QueryResult>(`/cards/${id}/run`, { method: "POST" }),
+  dashboards: () => request<Dashboard[]>("/dashboards"),
+  createDashboard: (
+    body: { name: string; card_ids: string[] },
+    token: string,
+  ) => authed<Dashboard>("/dashboards", "POST", token, body),
+  exportContent: (token: string) =>
+    authed<{ collections: unknown[]; cards: Card[]; dashboards: Dashboard[] }>(
+      "/export",
+      "GET",
+      token,
     ),
-  databaseTables: (id: string) => request<unknown[]>(`/databases/${id}/tables`),
 };

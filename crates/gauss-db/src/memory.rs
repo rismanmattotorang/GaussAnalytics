@@ -14,8 +14,8 @@ use gauss_core::error::{CoreError, CoreResult};
 use uuid::Uuid;
 
 use crate::repository::{
-    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
-    SessionRepository, UserRepository,
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, ContentRecord, ContentRepository,
+    DatabaseRepository, GrantRepository, SessionRepository, UserRepository,
 };
 
 /// A thread-safe, process-local application store.
@@ -28,6 +28,7 @@ pub struct InMemoryStore {
     sessions: RwLock<HashMap<String, Session>>,     // token -> session
     grants: RwLock<HashMap<Uuid, HashSet<Permission>>>, // user_id -> permissions
     api_keys: RwLock<HashMap<Uuid, (ApiKeyRecord, bool)>>, // id -> (record, revoked)
+    content: RwLock<HashMap<Uuid, ContentRecord>>,  // id -> content
 }
 
 impl InMemoryStore {
@@ -240,6 +241,39 @@ impl ApiKeyRepository for InMemoryStore {
         if let Some((_, revoked)) = self.api_keys.write().map_err(lock_err)?.get_mut(&id) {
             *revoked = true;
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ContentRepository for InMemoryStore {
+    async fn put_content(&self, record: ContentRecord) -> CoreResult<()> {
+        self.content
+            .write()
+            .map_err(lock_err)?
+            .insert(record.id, record);
+        Ok(())
+    }
+
+    async fn get_content(&self, id: Uuid) -> CoreResult<Option<ContentRecord>> {
+        Ok(self.content.read().map_err(lock_err)?.get(&id).cloned())
+    }
+
+    async fn list_content(&self, kind: &str) -> CoreResult<Vec<ContentRecord>> {
+        let mut v: Vec<ContentRecord> = self
+            .content
+            .read()
+            .map_err(lock_err)?
+            .values()
+            .filter(|c| c.kind == kind)
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(v)
+    }
+
+    async fn delete_content(&self, id: Uuid) -> CoreResult<()> {
+        self.content.write().map_err(lock_err)?.remove(&id);
         Ok(())
     }
 }

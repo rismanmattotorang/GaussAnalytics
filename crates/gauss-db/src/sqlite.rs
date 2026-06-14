@@ -17,8 +17,8 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::repository::{
-    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
-    SessionRepository, UserRepository,
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, ContentRecord, ContentRepository,
+    DatabaseRepository, GrantRepository, SessionRepository, UserRepository,
 };
 
 /// Storage encoding of a permission scope: the UUID string, or '' for unscoped.
@@ -466,6 +466,73 @@ impl ApiKeyRepository for SqliteStore {
     }
 }
 
+#[async_trait]
+impl ContentRepository for SqliteStore {
+    async fn put_content(&self, record: ContentRecord) -> CoreResult<()> {
+        sqlx::query(
+            "INSERT INTO content (id, kind, collection_id, name, body_json, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT (id) DO UPDATE SET \
+               kind = excluded.kind, collection_id = excluded.collection_id, \
+               name = excluded.name, body_json = excluded.body_json",
+        )
+        .bind(record.id.to_string())
+        .bind(&record.kind)
+        .bind(record.collection_id.map(|c| c.to_string()))
+        .bind(&record.name)
+        .bind(&record.body_json)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn get_content(&self, id: Uuid) -> CoreResult<Option<ContentRecord>> {
+        let row = sqlx::query(
+            "SELECT id, kind, collection_id, name, body_json, created_at FROM content WHERE id = ?",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        row.map(content_from_row).transpose()
+    }
+
+    async fn list_content(&self, kind: &str) -> CoreResult<Vec<ContentRecord>> {
+        let rows = sqlx::query(
+            "SELECT id, kind, collection_id, name, body_json, created_at FROM content \
+             WHERE kind = ? ORDER BY created_at DESC",
+        )
+        .bind(kind)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        rows.into_iter().map(content_from_row).collect()
+    }
+
+    async fn delete_content(&self, id: Uuid) -> CoreResult<()> {
+        sqlx::query("DELETE FROM content WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+}
+
+fn content_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<ContentRecord> {
+    let collection_id: Option<String> = row.try_get("collection_id").map_err(storage)?;
+    Ok(ContentRecord {
+        id: parse_uuid(&row.try_get::<String, _>("id").map_err(storage)?)?,
+        kind: row.try_get("kind").map_err(storage)?,
+        collection_id: collection_id.as_deref().map(parse_uuid).transpose()?,
+        name: row.try_get("name").map_err(storage)?,
+        body_json: row.try_get("body_json").map_err(storage)?,
+        created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +642,41 @@ mod tests {
         s.revoke_api_key(keys[0].id).await.unwrap();
         assert_eq!(s.api_key_user("abc123").await.unwrap(), None);
         assert!(s.list_api_keys(uid).await.unwrap()[0].revoked);
+    }
+
+    #[tokio::test]
+    async fn content_upsert_list_delete() {
+        use crate::repository::ContentRecord;
+        let s = store().await;
+        let id = Uuid::new_v4();
+        s.put_content(ContentRecord {
+            id,
+            kind: "card".into(),
+            collection_id: None,
+            name: "Revenue".into(),
+            body_json: r#"{"q":1}"#.into(),
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+        // Upsert (rename) keeps the same id.
+        s.put_content(ContentRecord {
+            id,
+            kind: "card".into(),
+            collection_id: None,
+            name: "Revenue v2".into(),
+            body_json: r#"{"q":2}"#.into(),
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+        let got = s.get_content(id).await.unwrap().unwrap();
+        assert_eq!(got.name, "Revenue v2");
+        assert_eq!(s.list_content("card").await.unwrap().len(), 1);
+        assert!(s.list_content("dashboard").await.unwrap().is_empty());
+        s.delete_content(id).await.unwrap();
+        assert!(s.get_content(id).await.unwrap().is_none());
     }
 
     #[tokio::test]

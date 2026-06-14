@@ -17,8 +17,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::repository::{
-    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, DatabaseRepository, GrantRepository,
-    SessionRepository, UserRepository,
+    ApiKeyInfo, ApiKeyRecord, ApiKeyRepository, ContentRecord, ContentRepository,
+    DatabaseRepository, GrantRepository, SessionRepository, UserRepository,
 };
 use crate::sqlite::{scope_from_str, scope_to_str};
 
@@ -428,6 +428,73 @@ impl ApiKeyRepository for PgStore {
             .map_err(storage)?;
         Ok(())
     }
+}
+
+#[async_trait]
+impl ContentRepository for PgStore {
+    async fn put_content(&self, record: ContentRecord) -> CoreResult<()> {
+        sqlx::query(
+            "INSERT INTO content (id, kind, collection_id, name, body_json, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             ON CONFLICT (id) DO UPDATE SET \
+               kind = excluded.kind, collection_id = excluded.collection_id, \
+               name = excluded.name, body_json = excluded.body_json",
+        )
+        .bind(record.id.to_string())
+        .bind(&record.kind)
+        .bind(record.collection_id.map(|c| c.to_string()))
+        .bind(&record.name)
+        .bind(&record.body_json)
+        .bind(record.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(storage)?;
+        Ok(())
+    }
+
+    async fn get_content(&self, id: Uuid) -> CoreResult<Option<ContentRecord>> {
+        let row = sqlx::query(
+            "SELECT id, kind, collection_id, name, body_json, created_at FROM content WHERE id = $1",
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(storage)?;
+        row.map(content_from_row).transpose()
+    }
+
+    async fn list_content(&self, kind: &str) -> CoreResult<Vec<ContentRecord>> {
+        let rows = sqlx::query(
+            "SELECT id, kind, collection_id, name, body_json, created_at FROM content \
+             WHERE kind = $1 ORDER BY created_at DESC",
+        )
+        .bind(kind)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(storage)?;
+        rows.into_iter().map(content_from_row).collect()
+    }
+
+    async fn delete_content(&self, id: Uuid) -> CoreResult<()> {
+        sqlx::query("DELETE FROM content WHERE id = $1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+}
+
+fn content_from_row(row: PgRow) -> CoreResult<ContentRecord> {
+    let collection_id: Option<String> = row.try_get("collection_id").map_err(storage)?;
+    Ok(ContentRecord {
+        id: parse_uuid(&row.try_get::<String, _>("id").map_err(storage)?)?,
+        kind: row.try_get("kind").map_err(storage)?,
+        collection_id: collection_id.as_deref().map(parse_uuid).transpose()?,
+        name: row.try_get("name").map_err(storage)?,
+        body_json: row.try_get("body_json").map_err(storage)?,
+        created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,
+    })
 }
 
 #[cfg(test)]

@@ -28,7 +28,176 @@ body {
 }
 
 .app__header {
-  margin-bottom: 2rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.app__session {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.login {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+input,
+select {
+  background: #0f1530;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+button {
+  background: var(--accent);
+  color: #042033;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.4rem 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button.link {
+  background: transparent;
+  color: var(--accent);
+  padding: 0.2rem 0.3rem;
+}
+
+.app__nav {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.tab {
+  background: var(--panel);
+  color: var(--muted);
+}
+.tab[data-active="true"] {
+  background: var(--accent);
+  color: #042033;
+}
+
+.builder__controls,
+.builder__agg,
+.builder__actions,
+.nlask__row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.85rem;
+}
+.chip {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  background: #0f1530;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  color: var(--text);
+}
+.chip__type {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.75rem 0;
+}
+.chart__row {
+  display: grid;
+  grid-template-columns: 8rem 1fr 4rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+.chart__label {
+  color: var(--muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chart__bar {
+  height: 0.9rem;
+  background: linear-gradient(90deg, var(--accent), #818cf8);
+  border-radius: 4px;
+}
+.chart__value {
+  font-variant-numeric: tabular-nums;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-height: 24rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  background: #0f1530;
+}
+
+.sql {
+  background: #0f1530;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+
+.saved__list {
+  list-style: none;
+  padding: 0;
+}
+.saved__list li {
+  padding: 0.3rem 0;
+}
+
+.ok {
+  color: var(--ok);
 }
 
 .app__brand {
