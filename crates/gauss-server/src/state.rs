@@ -7,12 +7,16 @@ use gauss_db::Store;
 use gauss_mcp_gateway::McpGateway;
 use gauss_nl2sql::{HttpNl2Sql, Nl2SqlPipeline};
 
+use crate::cache::ResultCache;
+
 /// Cloneable handle to all shared services. `Clone` is cheap — everything is an
 /// `Arc` or `Option<Arc<_>>`.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
     pub store: Arc<dyn Store>,
+    /// Query-result cache (no-op when the configured TTL is zero).
+    pub cache: Arc<ResultCache>,
     /// Present only when the MCP integration is enabled in config.
     pub mcp: Option<Arc<dyn McpGateway>>,
     /// Present only when the NL2SQL integration is enabled in config.
@@ -41,9 +45,12 @@ impl AppState {
             None
         };
 
+        let cache = Arc::new(ResultCache::new(config.server.cache_ttl_secs));
+
         Ok(Self {
             config: Arc::new(config),
             store,
+            cache,
             mcp,
             nl2sql,
         })

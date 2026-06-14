@@ -132,7 +132,8 @@ crates/
   gauss-config        layered configuration
   gauss-auth          Argon2 hashing · sessions · RBAC
   gauss-db            metadata store (repository traits · in-memory · sqlx SQLite/Postgres)
-  gauss-drivers       data-source drivers (SQLite, Postgres): execute · discover schema
+  gauss-drivers       data-source drivers (SQLite/Postgres/MySQL): execute · discover · fingerprint
+  gauss-scheduler     background job engine (schema refresh, query alerts)
   gauss-mcp-gateway   integration layer → Gaussian MCP Servers
   gauss-nl2sql        integration layer → Gaussian NL2SQL
   gauss-server        axum HTTP/JSON API + static web UI hosting
@@ -144,15 +145,18 @@ docs/                 strategy, architecture, roadmap, ADRs
 
 ## Status
 
-GaussAnalytics is in active development. **Phases 0, 1, and 2 are complete**:
-persistent storage (`sqlx`, **SQLite / Postgres / MySQL**, with migrations),
-data-source drivers that **execute queries, discover schema, and fingerprint
-columns**, authentication (sessions, **persisted per-user grants**, mandatory-auth
-middleware, **rotatable API keys**), data-source management endpoints, a
-**differential-testing harness**, a **contract-compatibility suite**, and an
-admin **TUI that reads live data**. `cargo test --workspace` is green;
-`gaussctl serve`/`migrate`/`admin` all work. See the [Roadmap](docs/ROADMAP.md)
-for Phase 3+ (scheduling/alerts, embedding, caching, deeper agentic AI).
+GaussAnalytics is in active development. **Phases 0–3 are complete**: persistent
+storage (`sqlx`, **SQLite / Postgres / MySQL**, with migrations), data-source
+drivers that **execute queries, discover schema, and fingerprint columns**,
+authentication (sessions, **persisted per-user grants**, mandatory-auth
+middleware, **rotatable API keys**), data-source management, a **background
+scheduler with query alerts**, **signed-token embedding**, a **query-result
+cache**, a **differential-testing harness**, a **contract-compatibility suite**,
+and an admin **TUI that reads live data**. `cargo test --workspace` is green.
+
+See [**how GaussAnalytics compares**](docs/COMPARISON.md) to the reference
+platform, and the [Roadmap](docs/ROADMAP.md) for Phase 4 (visualization/dashboard
+UX, driver breadth, content portability, deeper agentic AI).
 
 ## Development
 

@@ -672,6 +672,7 @@ dependencies = [
  "argon2",
  "chrono",
  "gauss-core",
+ "hmac",
  "rand_core 0.6.4",
  "serde",
  "sha2",
@@ -757,9 +758,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gauss-scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "gauss-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "gauss-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "chrono",
  "gauss-auth",
@@ -770,6 +783,7 @@ dependencies = [
  "gauss-mcp-gateway",
  "gauss-nl2sql",
  "gauss-query",
+ "gauss-scheduler",
  "serde",
  "serde_json",
  "sqlx",
