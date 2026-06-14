@@ -161,6 +161,20 @@ impl Table {
     }
 }
 
+/// A row-level-security policy: a mandatory filter automatically injected into
+/// queries against `table` for **non-admin** principals. Enforced as a bound
+/// GQL predicate (parameterized SQL), so it cannot be bypassed by query text.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RlsPolicy {
+    pub id: Uuid,
+    pub database_id: Uuid,
+    pub table: String,
+    pub column: String,
+    #[serde(default)]
+    pub op: crate::gql::CompareOp,
+    pub value: crate::gql::Literal,
+}
+
 /// A saved question: a named, reusable [`crate::gql::Query`] over a database.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Card {

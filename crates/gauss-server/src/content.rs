@@ -13,10 +13,10 @@ use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
     Card, CardLayout, Collection, Dashboard, DashboardParameter, DashboardTab, ParamBinding,
-    ParamKind,
+    ParamKind, RlsPolicy,
 };
 use gauss_core::error::CoreError;
-use gauss_core::gql::{Filter, Literal, Query};
+use gauss_core::gql::{CompareOp, Filter, Literal, Query};
 use gauss_db::ContentRecord;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ use crate::{execute_query, CompileRequest};
 const KIND_CARD: &str = "card";
 const KIND_DASHBOARD: &str = "dashboard";
 const KIND_COLLECTION: &str = "collection";
+const KIND_METRIC: &str = "metric";
+const KIND_RLS: &str = "rls_policy";
 
 async fn require_create(st: &AppState, headers: &HeaderMap) -> Result<auth::CurrentUser, ApiError> {
     let current = auth::authenticate(st, headers).await?;
@@ -484,4 +486,136 @@ pub async fn import_content(
         cards: bundle.cards.len(),
         dashboards: bundle.dashboards.len(),
     }))
+}
+
+// --- Metrics (named, reusable measures) ----------------------------------
+//
+// A metric is a saved, named query whose intent is a measure (an aggregation).
+// It is stored alongside questions but listed separately so it can be reused
+// across dashboards and questions — the lightweight start of a semantic layer.
+
+pub async fn create_metric(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateCardRequest>,
+) -> Result<Json<Card>, ApiError> {
+    require_create(&st, &headers).await?;
+    let metric = Card {
+        id: Uuid::new_v4(),
+        name: req.name,
+        database_id: req.database_id,
+        query: req.query,
+        created_at: Utc::now(),
+    };
+    st.store
+        .put_content(ContentRecord {
+            id: metric.id,
+            kind: KIND_METRIC.into(),
+            collection_id: req.collection_id,
+            name: metric.name.clone(),
+            body_json: json_of(&metric)?,
+            created_at: metric.created_at,
+        })
+        .await?;
+    Ok(Json(metric))
+}
+
+pub async fn list_metrics(State(st): State<AppState>) -> Result<Json<Vec<Card>>, ApiError> {
+    Ok(Json(parse_all(st.store.list_content(KIND_METRIC).await?)?))
+}
+
+pub async fn run_metric(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
+    let rec = st
+        .store
+        .get_content(id)
+        .await?
+        .filter(|r| r.kind == KIND_METRIC)
+        .ok_or_else(|| CoreError::NotFound(format!("metric {id}")))?;
+    let metric: Card = parse_one(&rec)?;
+    let result = execute_query(
+        &st,
+        &headers,
+        &CompileRequest {
+            database_id: metric.database_id,
+            query: metric.query,
+        },
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+// --- Row-level security policies -----------------------------------------
+
+#[derive(Deserialize)]
+pub struct CreateRlsRequest {
+    pub database_id: Uuid,
+    pub table: String,
+    pub column: String,
+    #[serde(default)]
+    pub op: CompareOp,
+    pub value: Literal,
+}
+
+/// Create a row-level-security policy (admin only).
+pub async fn create_rls(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateRlsRequest>,
+) -> Result<Json<RlsPolicy>, ApiError> {
+    auth::authenticate(&st, &headers)
+        .await?
+        .perms
+        .require(Permission::ManageSettings)?;
+    let policy = RlsPolicy {
+        id: Uuid::new_v4(),
+        database_id: req.database_id,
+        table: req.table,
+        column: req.column,
+        op: req.op,
+        value: req.value,
+    };
+    st.store
+        .put_content(ContentRecord {
+            id: policy.id,
+            kind: KIND_RLS.into(),
+            collection_id: Some(policy.database_id),
+            name: format!("{}.{}", policy.table, policy.column),
+            body_json: json_of(&policy)?,
+            created_at: Utc::now(),
+        })
+        .await?;
+    Ok(Json(policy))
+}
+
+pub async fn list_rls(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<RlsPolicy>>, ApiError> {
+    auth::authenticate(&st, &headers)
+        .await?
+        .perms
+        .require(Permission::ManageSettings)?;
+    Ok(Json(parse_all(st.store.list_content(KIND_RLS).await?)?))
+}
+
+/// Row-level-security policies applicable to `table` of `database_id`.
+pub async fn policies_for(
+    st: &AppState,
+    database_id: Uuid,
+    table: &str,
+) -> Result<Vec<RlsPolicy>, ApiError> {
+    let recs = st.store.list_content(KIND_RLS).await?;
+    let mut out = Vec::new();
+    for r in &recs {
+        if let Ok(p) = serde_json::from_str::<RlsPolicy>(&r.body_json) {
+            if p.database_id == database_id && p.table == table {
+                out.push(p);
+            }
+        }
+    }
+    Ok(out)
 }

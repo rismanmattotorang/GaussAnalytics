@@ -83,6 +83,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/cards/{id}/run", post(content::run_card))
         .route(
+            "/metrics",
+            get(content::list_metrics).post(content::create_metric),
+        )
+        .route("/metrics/{id}/run", post(content::run_metric))
+        .route("/rls", get(content::list_rls).post(content::create_rls))
+        .route(
             "/dashboards",
             get(content::list_dashboards).post(content::create_dashboard),
         )
@@ -497,12 +503,17 @@ pub(crate) async fn prepare_query(
     headers: &HeaderMap,
     req: &CompileRequest,
 ) -> Result<(Database, CompiledQuery), ApiError> {
-    if auth::bearer_token(headers).is_some() {
+    // Resolve the principal (if any) so we can enforce read permission and
+    // apply row-level security for non-admins.
+    let principal = if auth::bearer_token(headers).is_some() {
         let current = auth::authenticate(st, headers).await?;
         current.perms.require(Permission::ReadDatabase {
             database_id: req.database_id,
         })?;
-    }
+        Some(current)
+    } else {
+        None
+    };
 
     let db = st
         .store
@@ -518,11 +529,26 @@ pub(crate) async fn prepare_query(
             CoreError::InvalidQuery(format!("unknown table `{}`", req.query.source_table))
         })?;
 
+    let mut query = req.query.clone();
+
+    // Row-level security: inject mandatory bound predicates for non-admins.
+    if let Some(p) = &principal {
+        if !p.user.is_admin {
+            for policy in content::policies_for(st, db.id, &query.source_table).await? {
+                query.filters.push(gauss_core::gql::Filter::Compare {
+                    field: policy.column,
+                    op: policy.op,
+                    value: policy.value,
+                });
+            }
+        }
+    }
+
     // Ground the query against synced metadata before compiling.
-    req.query.validate(&table)?;
+    query.validate(&table)?;
 
     let dialect = gauss_query::dialect::for_kind(db.kind);
-    let compiled = gauss_query::compile(&req.query, dialect.as_ref())?;
+    let compiled = gauss_query::compile(&query, dialect.as_ref())?;
     Ok((db, compiled))
 }
 
@@ -1876,6 +1902,131 @@ mod tests {
         assert_eq!(got.0.name, "Board v2");
         assert_eq!(got.0.layout.len(), 1);
         assert_eq!(got.0.layout[0].w, 2);
+    }
+
+    #[tokio::test]
+    async fn rls_restricts_non_admins_and_metrics_run() {
+        use axum::extract::Path;
+        use gauss_core::gql::{CompareOp, Literal};
+        use gauss_db::{GrantRepository, UserRepository};
+
+        let path = std::env::temp_dir().join(format!("gauss_rls_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, region TEXT, total REAL)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (region,total) VALUES ('us',10),('us',5),('eu',2)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        let store = Arc::new(InMemoryStore::new());
+        let db = Database {
+            id: Uuid::new_v4(),
+            name: "sales".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: true,
+            connection_uri: Some(uri),
+            created_at: Utc::now(),
+        };
+        let db_id = db.id;
+        store.create_database(db.clone()).await.unwrap();
+        jobs::sync_one(&(store.clone() as Arc<dyn Store>), &db)
+            .await
+            .unwrap();
+        ensure_admin(store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        // A viewer with read access to the database.
+        let viewer_id = Uuid::new_v4();
+        store
+            .create_user(
+                User {
+                    id: viewer_id,
+                    email: "viewer@example.com".into(),
+                    display_name: "Viewer".into(),
+                    is_admin: false,
+                    created_at: Utc::now(),
+                },
+                gauss_auth::hash_password("viewerpass12").unwrap(),
+            )
+            .await
+            .unwrap();
+        store
+            .grant(viewer_id, Permission::ReadDatabase { database_id: db_id })
+            .await
+            .unwrap();
+
+        let st = AppState::new(AppConfig::default(), store).unwrap();
+        let admin_login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let viewer_login = auth::login(&st, "viewer@example.com", "viewerpass12")
+            .await
+            .unwrap();
+
+        // Admin creates an RLS policy restricting `orders` to region = 'us'.
+        let _ = content::create_rls(
+            State(st.clone()),
+            bearer(&admin_login.token),
+            Json(content::CreateRlsRequest {
+                database_id: db_id,
+                table: "orders".into(),
+                column: "region".into(),
+                op: CompareOp::Eq,
+                value: Literal::Text("us".into()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let mut q = Query::new("orders");
+        q.fields = vec!["region".into(), "total".into()];
+        let req = || CompileRequest {
+            database_id: db_id,
+            query: q.clone(),
+        };
+
+        // The viewer sees only the 2 'us' rows (policy injected as bound filter).
+        let viewer_rows = run_dataset(State(st.clone()), bearer(&viewer_login.token), Json(req()))
+            .await
+            .unwrap();
+        assert_eq!(viewer_rows.0.rows.len(), 2);
+
+        // The admin bypasses RLS and sees all 3 rows.
+        let admin_rows = run_dataset(State(st.clone()), bearer(&admin_login.token), Json(req()))
+            .await
+            .unwrap();
+        assert_eq!(admin_rows.0.rows.len(), 3);
+
+        // A metric (named measure) can be created and run.
+        let mut mq = Query::new("orders");
+        mq.aggregations = vec![gauss_core::gql::Aggregation {
+            func: gauss_core::gql::AggFunc::Sum,
+            field: Some("total".into()),
+            alias: Some("revenue".into()),
+        }];
+        let metric = content::create_metric(
+            State(st.clone()),
+            bearer(&admin_login.token),
+            Json(content::CreateCardRequest {
+                name: "Revenue".into(),
+                database_id: db_id,
+                query: mq,
+                collection_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let ran = content::run_metric(State(st), Path(metric.0.id), bearer(&admin_login.token))
+            .await
+            .unwrap();
+        assert_eq!(ran.0.rows.len(), 1);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
