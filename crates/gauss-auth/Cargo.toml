@@ -1,0 +1,16 @@
+[package]
+name = "gauss-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics authentication, sessions, and role/permission model."
+
+[dependencies]
+gauss-core.workspace = true
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+argon2 = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }

@@ -1,0 +1,18 @@
+[package]
+name = "gauss-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics application metadata store: repository traits + in-memory impl."
+
+[dependencies]
+gauss-core.workspace = true
+gauss-auth.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

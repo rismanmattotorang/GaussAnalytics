@@ -1,0 +1,30 @@
+[package]
+name = "gauss-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics HTTP/JSON API server (axum) and static frontend host."
+
+[dependencies]
+gauss-core.workspace = true
+gauss-config.workspace = true
+gauss-query.workspace = true
+gauss-db.workspace = true
+gauss-auth.workspace = true
+gauss-mcp-gateway.workspace = true
+gauss-nl2sql.workspace = true
+
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
