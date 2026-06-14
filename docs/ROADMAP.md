@@ -148,11 +148,16 @@ Delivered (compiling + tested):
       (single SELECT/WITH enforced before the DB, permission-checked + cached)
       + a UI editor view. Safer than Metabase's writable native queries.
 - [x] **Pivot tables** — a pivot view over 3-column aggregates in the result UI.
+- [x] **Dashboard editor + shared filters** — compose a dashboard from saved
+      cards and define **shared filter parameters bound to card fields**;
+      `POST /api/dashboards/{id}/run` injects values as **bound GQL predicates**
+      (parameterized SQL, permission-checked, cached). A filter bar drives the
+      grid in the UI. (Superior to string-interpolated dashboard filters.)
 
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
 - [ ] More chart types (area/scatter/map/funnel/combo).
-- [ ] Drag-and-drop dashboard layout editor, dashboard filters/params.
+- [ ] Drag-and-drop dashboard *layout* editor, cross-filtering, auto-refresh.
 - [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).

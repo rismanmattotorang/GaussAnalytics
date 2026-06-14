@@ -173,11 +173,44 @@ pub struct Collection {
     pub parent_id: Option<Uuid>,
 }
 
-/// A dashboard arranges cards for at-a-glance consumption.
+/// The value type of a dashboard filter parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamKind {
+    Text,
+    Number,
+}
+
+/// A dashboard-level filter parameter (e.g. a `status` text filter).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DashboardParameter {
+    pub name: String,
+    pub kind: ParamKind,
+}
+
+/// Binds a dashboard parameter to a field of one card. When the dashboard is
+/// run with a value for `parameter`, that value is injected as a **bound GQL
+/// filter** (`field <op> value`) into the card's query — parameterized SQL, not
+/// string interpolation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParamBinding {
+    pub parameter: String,
+    pub card_id: Uuid,
+    pub field: String,
+    #[serde(default)]
+    pub op: crate::gql::CompareOp,
+}
+
+/// A dashboard arranges cards for at-a-glance consumption, optionally with
+/// shared filter parameters that apply across its cards.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Dashboard {
     pub id: Uuid,
     pub name: String,
     pub collection_id: Option<Uuid>,
     pub card_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub parameters: Vec<DashboardParameter>,
+    #[serde(default)]
+    pub bindings: Vec<ParamBinding>,
 }

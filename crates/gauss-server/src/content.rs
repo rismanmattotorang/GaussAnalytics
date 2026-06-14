@@ -11,9 +11,11 @@ use axum::http::HeaderMap;
 use axum::Json;
 use chrono::Utc;
 use gauss_auth::Permission;
-use gauss_core::domain::{Card, Collection, Dashboard};
+use gauss_core::domain::{
+    Card, Collection, Dashboard, DashboardParameter, ParamBinding, ParamKind,
+};
 use gauss_core::error::CoreError;
-use gauss_core::gql::Query;
+use gauss_core::gql::{Filter, Literal, Query};
 use gauss_db::ContentRecord;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -181,11 +183,15 @@ pub async fn run_card(
 
 #[derive(Deserialize)]
 pub struct CreateDashboardRequest {
-    name: String,
+    pub name: String,
     #[serde(default)]
-    collection_id: Option<Uuid>,
+    pub collection_id: Option<Uuid>,
     #[serde(default)]
-    card_ids: Vec<Uuid>,
+    pub card_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub parameters: Vec<DashboardParameter>,
+    #[serde(default)]
+    pub bindings: Vec<ParamBinding>,
 }
 
 pub async fn create_dashboard(
@@ -199,6 +205,8 @@ pub async fn create_dashboard(
         name: req.name,
         collection_id: req.collection_id,
         card_ids: req.card_ids,
+        parameters: req.parameters,
+        bindings: req.bindings,
     };
     st.store
         .put_content(ContentRecord {
@@ -240,6 +248,120 @@ pub async fn delete_dashboard(
     require_create(&st, &headers).await?;
     st.store.delete_content(id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// --- Dashboard run (with shared filters) ---------------------------------
+
+#[derive(Deserialize)]
+pub struct RunDashboardRequest {
+    /// Parameter name → value for the dashboard's shared filters.
+    #[serde(default)]
+    pub values: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct DashboardCardResult {
+    pub card_id: Uuid,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<gauss_drivers::QueryResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Convert an incoming JSON value into a typed GQL [`Literal`] per the
+/// parameter's declared kind. Returns `None` for unknown params / bad values.
+fn literal_for(
+    params: &[DashboardParameter],
+    name: &str,
+    v: &serde_json::Value,
+) -> Option<Literal> {
+    let kind = params.iter().find(|p| p.name == name)?.kind;
+    match kind {
+        ParamKind::Text => match v {
+            serde_json::Value::String(s) => Some(Literal::Text(s.clone())),
+            serde_json::Value::Null => None,
+            other => Some(Literal::Text(other.to_string())),
+        },
+        ParamKind::Number => match v {
+            serde_json::Value::Number(n) => n.as_f64().map(Literal::Float),
+            serde_json::Value::String(s) => s.parse::<f64>().ok().map(Literal::Float),
+            _ => None,
+        },
+    }
+}
+
+/// Run every card on a dashboard, injecting the dashboard's shared filter
+/// values as **bound GQL filters** into each card's query (parameterized SQL,
+/// permission-checked, cached). Per-card failures are reported, not fatal.
+pub async fn run_dashboard(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<RunDashboardRequest>,
+) -> Result<Json<Vec<DashboardCardResult>>, ApiError> {
+    let rec = st
+        .store
+        .get_content(id)
+        .await?
+        .filter(|r| r.kind == KIND_DASHBOARD)
+        .ok_or_else(|| CoreError::NotFound(format!("dashboard {id}")))?;
+    let dash: Dashboard = parse_one(&rec)?;
+
+    let mut out = Vec::with_capacity(dash.card_ids.len());
+    for card_id in &dash.card_ids {
+        let card = match load_card(&st, *card_id).await {
+            Ok(c) => c,
+            Err(_) => {
+                out.push(DashboardCardResult {
+                    card_id: *card_id,
+                    name: "(missing card)".into(),
+                    result: None,
+                    error: Some("card not found".into()),
+                });
+                continue;
+            }
+        };
+
+        // Inject dashboard filter values bound to this card.
+        let mut query = card.query.clone();
+        for b in dash.bindings.iter().filter(|b| &b.card_id == card_id) {
+            if let Some(v) = req.values.get(&b.parameter) {
+                if let Some(lit) = literal_for(&dash.parameters, &b.parameter, v) {
+                    query.filters.push(Filter::Compare {
+                        field: b.field.clone(),
+                        op: b.op,
+                        value: lit,
+                    });
+                }
+            }
+        }
+
+        match execute_query(
+            &st,
+            &headers,
+            &CompileRequest {
+                database_id: card.database_id,
+                query,
+            },
+        )
+        .await
+        {
+            Ok(result) => out.push(DashboardCardResult {
+                card_id: *card_id,
+                name: card.name,
+                result: Some(result),
+                error: None,
+            }),
+            Err(e) => out.push(DashboardCardResult {
+                card_id: *card_id,
+                name: card.name,
+                result: None,
+                error: Some(e.0.to_string()),
+            }),
+        }
+    }
+    Ok(Json(out))
 }
 
 // --- Export / import -----------------------------------------------------

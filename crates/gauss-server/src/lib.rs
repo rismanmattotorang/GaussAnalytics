@@ -90,6 +90,7 @@ pub fn router(state: AppState) -> Router {
             "/dashboards/{id}",
             get(content::get_dashboard).delete(content::delete_dashboard),
         )
+        .route("/dashboards/{id}/run", post(content::run_dashboard))
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
         .route("/embed/token", post(embed_token))
@@ -1626,6 +1627,123 @@ mod tests {
         )
         .await;
         assert!(bad.is_err());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn dashboard_filters_inject_bound_predicates() {
+        use axum::extract::Path;
+        use gauss_core::domain::{Card, Dashboard, DashboardParameter, ParamBinding, ParamKind};
+        use gauss_core::gql::CompareOp;
+        use gauss_db::{ContentRecord, ContentRepository};
+
+        let path = std::env::temp_dir().join(format!("gauss_dashf_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total REAL)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO orders (status, total) VALUES ('paid',10),('paid',5),('refunded',2)",
+        )
+        .execute(setup.pool())
+        .await
+        .unwrap();
+
+        let store = Arc::new(InMemoryStore::new());
+        let db = Database {
+            id: Uuid::new_v4(),
+            name: "sales".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: true,
+            connection_uri: Some(uri),
+            created_at: Utc::now(),
+        };
+        store.create_database(db.clone()).await.unwrap();
+        jobs::sync_one(&(store.clone() as Arc<dyn Store>), &db)
+            .await
+            .unwrap();
+
+        // A card selecting all orders.
+        let mut q = Query::new("orders");
+        q.fields = vec!["status".into(), "total".into()];
+        let card = Card {
+            id: Uuid::new_v4(),
+            name: "Orders".into(),
+            database_id: db.id,
+            query: q,
+            created_at: Utc::now(),
+        };
+        store
+            .put_content(ContentRecord {
+                id: card.id,
+                kind: "card".into(),
+                collection_id: None,
+                name: card.name.clone(),
+                body_json: serde_json::to_string(&card).unwrap(),
+                created_at: card.created_at,
+            })
+            .await
+            .unwrap();
+
+        // A dashboard with a `status` filter bound to the card's status field.
+        let dash = Dashboard {
+            id: Uuid::new_v4(),
+            name: "Board".into(),
+            collection_id: None,
+            card_ids: vec![card.id],
+            parameters: vec![DashboardParameter {
+                name: "status".into(),
+                kind: ParamKind::Text,
+            }],
+            bindings: vec![ParamBinding {
+                parameter: "status".into(),
+                card_id: card.id,
+                field: "status".into(),
+                op: CompareOp::Eq,
+            }],
+        };
+        store
+            .put_content(ContentRecord {
+                id: dash.id,
+                kind: "dashboard".into(),
+                collection_id: None,
+                name: dash.name.clone(),
+                body_json: serde_json::to_string(&dash).unwrap(),
+                created_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        let st = AppState::new(AppConfig::default(), store).unwrap();
+
+        // No filter → all 3 rows.
+        let all = content::run_dashboard(
+            State(st.clone()),
+            Path(dash.id),
+            HeaderMap::new(),
+            Json(content::RunDashboardRequest {
+                values: Default::default(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(all.0[0].result.as_ref().unwrap().rows.len(), 3);
+
+        // status=paid → 2 rows (filter injected as a bound predicate).
+        let mut values = std::collections::HashMap::new();
+        values.insert("status".to_string(), serde_json::json!("paid"));
+        let filtered = content::run_dashboard(
+            State(st),
+            Path(dash.id),
+            HeaderMap::new(),
+            Json(content::RunDashboardRequest { values }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.0[0].result.as_ref().unwrap().rows.len(), 2);
 
         let _ = std::fs::remove_file(&path);
     }
