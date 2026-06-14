@@ -13,19 +13,27 @@
 
 #![forbid(unsafe_code)]
 
+pub mod bigquery;
+pub mod clickhouse;
 pub mod mysql;
 pub mod postgres;
+pub mod rest;
+pub mod snowflake;
 pub mod sqlite;
 
 use async_trait::async_trait;
-use gauss_core::domain::{DataSourceKind, FieldType, Fingerprint};
+use gauss_core::domain::{DataSourceKind, FieldType};
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::CompiledQuery;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+pub use bigquery::BigQueryDriver;
+pub use clickhouse::ClickHouseDriver;
+pub use gauss_core::domain::Fingerprint;
 pub use mysql::MySqlDriver;
 pub use postgres::PgDriver;
+pub use snowflake::SnowflakeDriver;
 pub use sqlite::SqliteDriver;
 
 /// The tabular result of executing a query.
@@ -96,6 +104,9 @@ pub async fn connect(kind: DataSourceKind, uri: &str) -> CoreResult<Box<dyn Driv
         DataSourceKind::Sqlite => Ok(Box::new(SqliteDriver::connect(uri).await?)),
         DataSourceKind::Postgres => Ok(Box::new(PgDriver::connect(uri).await?)),
         DataSourceKind::MySql => Ok(Box::new(MySqlDriver::connect(uri).await?)),
+        DataSourceKind::BigQuery => Ok(Box::new(BigQueryDriver::connect(uri)?)),
+        DataSourceKind::Snowflake => Ok(Box::new(SnowflakeDriver::connect(uri)?)),
+        DataSourceKind::ClickHouse => Ok(Box::new(ClickHouseDriver::connect(uri)?)),
         DataSourceKind::Generic => Err(CoreError::Integration(
             "no driver for the Generic data source kind".into(),
         )),

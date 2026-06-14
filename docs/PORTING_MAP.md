@@ -17,7 +17,7 @@ Legend — **Phase**: when it lands (see [`ROADMAP.md`](./ROADMAP.md)).
 | Dialect/driver SQL generation | Per-DB SQL quirks | `gauss-query::dialect` | (std) | 1→2 | ◐ |
 | Toucan2 ORM + entities | App metadata persistence | `gauss-db` repositories + `SqliteStore` | `sqlx` | 1→2 | ◐ |
 | Liquibase migrations | Schema versioning | SQL migrations + `gaussctl migrate` | `sqlx::migrate` | 2 | ◐ |
-| JDBC data-source drivers | Connect to warehouses | `gauss-drivers` (`Driver` trait + SQLite + Postgres) | `sqlx`, native connectors | 2 | ◐ |
+| JDBC data-source drivers | Connect to warehouses | `gauss-drivers` (`Driver` trait: SQLite/Postgres/MySQL via `sqlx`; BigQuery/Snowflake/ClickHouse via REST) | `sqlx`, `reqwest` | 2→4 | ◐ |
 | Auth / sessions | Login, sessions, API keys | `gauss-auth` + server auth (sessions, SHA-256 API keys) | `argon2`, `sha2` | 1→2 | ☑ |
 | Permissions / RBAC | Collection/DB-scoped access | `gauss-auth::perms` + persisted grants + route gate | (std) | 1→2 | ☑ |
 | Database sync / fingerprint / scan | Discover schema + stats | `gauss-drivers::sync_schema` + `fingerprint` | `sqlx`, `tokio` | 2 | ☑ |

@@ -56,8 +56,10 @@ GaussAnalytics does **not yet** match the reference platform's *breadth*:
 - **Visualization depth**: the web UI has a working query builder, table + bar
   chart, saved questions, and an NL ask panel — but not yet the full chart
   library (line/area/pie/map/pivot) or a drag-and-drop dashboard layout editor.
-- **Driver breadth**: SQLite/Postgres/MySQL today; the long tail (BigQuery,
-  Snowflake, Redshift, etc.) is added per demand behind the `Driver` trait.
+- **Driver breadth**: SQLite/Postgres/MySQL plus **BigQuery/Snowflake/ClickHouse**
+  (the latter three as integration-stage REST drivers with golden-tested
+  dialects, live-validation pending); further long tail (Redshift, Databricks,
+  …) per demand behind the `Driver` trait.
 - **AI depth**: NL2SQL + MCP are integrated and governed, but multi-turn
   clarification, lineage, and chained MCP agent workflows are still ahead.
 - **Subscriptions/pulses** delivery matrix and **row-level sandboxing** are

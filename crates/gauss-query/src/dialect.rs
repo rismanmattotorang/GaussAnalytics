@@ -7,6 +7,8 @@
 
 use gauss_core::domain::DataSourceKind;
 
+use crate::SqlParam;
+
 /// SQL generation rules that vary by database.
 pub trait Dialect: Send + Sync {
     /// A human-readable dialect name (for logs/diagnostics).
@@ -19,7 +21,11 @@ pub trait Dialect: Send + Sync {
     fn quote_ident(&self, ident: &str) -> String;
 
     /// Render the placeholder for the `n`-th bound parameter (1-based).
-    fn placeholder(&self, n: usize) -> String;
+    ///
+    /// `param` is provided because some engines (e.g. ClickHouse) require the
+    /// parameter's type in the placeholder itself (`{p1:Int64}`); most dialects
+    /// ignore it.
+    fn placeholder(&self, n: usize, param: &SqlParam) -> String;
 }
 
 /// Resolve the [`Dialect`] for a connected data source kind.
@@ -28,6 +34,9 @@ pub fn for_kind(kind: DataSourceKind) -> Box<dyn Dialect> {
         DataSourceKind::Postgres => Box::new(PostgresDialect),
         DataSourceKind::MySql => Box::new(MySqlDialect),
         DataSourceKind::Sqlite => Box::new(SqliteDialect),
+        DataSourceKind::BigQuery => Box::new(BigQueryDialect),
+        DataSourceKind::Snowflake => Box::new(SnowflakeDialect),
+        DataSourceKind::ClickHouse => Box::new(ClickHouseDialect),
         DataSourceKind::Generic => Box::new(GenericDialect),
     }
 }
@@ -35,6 +44,11 @@ pub fn for_kind(kind: DataSourceKind) -> Box<dyn Dialect> {
 /// Double-quote identifier style (`"col"`), escaping `"` as `""`.
 fn double_quote(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+/// Backtick identifier style (`` `col` ``), escaping `` ` `` as ` `` `.
+fn backtick(ident: &str) -> String {
+    format!("`{}`", ident.replace('`', "``"))
 }
 
 /// PostgreSQL: double-quoted identifiers, `$n` placeholders.
@@ -46,7 +60,7 @@ impl Dialect for PostgresDialect {
     fn quote_ident(&self, ident: &str) -> String {
         double_quote(ident)
     }
-    fn placeholder(&self, n: usize) -> String {
+    fn placeholder(&self, n: usize, _param: &SqlParam) -> String {
         format!("${n}")
     }
 }
@@ -58,9 +72,9 @@ impl Dialect for MySqlDialect {
         "mysql"
     }
     fn quote_ident(&self, ident: &str) -> String {
-        format!("`{}`", ident.replace('`', "``"))
+        backtick(ident)
     }
-    fn placeholder(&self, _n: usize) -> String {
+    fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
         "?".to_string()
     }
 }
@@ -74,8 +88,61 @@ impl Dialect for SqliteDialect {
     fn quote_ident(&self, ident: &str) -> String {
         double_quote(ident)
     }
-    fn placeholder(&self, _n: usize) -> String {
+    fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
         "?".to_string()
+    }
+}
+
+/// BigQuery: backtick identifiers, positional `?` parameters (StandardSQL).
+pub struct BigQueryDialect;
+impl Dialect for BigQueryDialect {
+    fn name(&self) -> &'static str {
+        "bigquery"
+    }
+    fn quote_ident(&self, ident: &str) -> String {
+        backtick(ident)
+    }
+    fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
+        "?".to_string()
+    }
+}
+
+/// Snowflake: double-quoted identifiers, positional `?` bindings.
+pub struct SnowflakeDialect;
+impl Dialect for SnowflakeDialect {
+    fn name(&self) -> &'static str {
+        "snowflake"
+    }
+    fn quote_ident(&self, ident: &str) -> String {
+        double_quote(ident)
+    }
+    fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
+        "?".to_string()
+    }
+}
+
+/// ClickHouse type name for a parameter (used in `{pN:Type}` placeholders).
+fn clickhouse_type(param: &SqlParam) -> &'static str {
+    match param {
+        SqlParam::Int(_) => "Int64",
+        SqlParam::Float(_) => "Float64",
+        SqlParam::Text(_) => "String",
+        SqlParam::Bool(_) => "UInt8",
+        SqlParam::Null => "Nullable(String)",
+    }
+}
+
+/// ClickHouse: backtick identifiers, typed `{pN:Type}` substitution params.
+pub struct ClickHouseDialect;
+impl Dialect for ClickHouseDialect {
+    fn name(&self) -> &'static str {
+        "clickhouse"
+    }
+    fn quote_ident(&self, ident: &str) -> String {
+        backtick(ident)
+    }
+    fn placeholder(&self, n: usize, param: &SqlParam) -> String {
+        format!("{{p{n}:{}}}", clickhouse_type(param))
     }
 }
 
@@ -88,7 +155,7 @@ impl Dialect for GenericDialect {
     fn quote_ident(&self, ident: &str) -> String {
         double_quote(ident)
     }
-    fn placeholder(&self, _n: usize) -> String {
+    fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
         "?".to_string()
     }
 }

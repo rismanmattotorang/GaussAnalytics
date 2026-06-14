@@ -7,7 +7,10 @@
 use gauss_core::gql::{
     AggFunc, Aggregation, CompareOp, Direction, Filter, Literal, OrderBy, Query,
 };
-use gauss_query::{compile, Dialect, GenericDialect, MySqlDialect, PostgresDialect, SqliteDialect};
+use gauss_query::{
+    compile, BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, MySqlDialect,
+    PostgresDialect, SnowflakeDialect, SqliteDialect,
+};
 
 /// Build a representative analytical query exercising select, filter,
 /// aggregation, breakout, order, and limit.
@@ -81,6 +84,34 @@ fn mysql_golden() {
     assert_sql(
         &MySqlDialect,
         "SELECT `status`, SUM(`total`) AS `revenue` FROM `orders` WHERE (`total` >= ? AND `status` IN (?, ?)) GROUP BY `status` ORDER BY `revenue` DESC LIMIT 25",
+        3,
+    );
+}
+
+#[test]
+fn bigquery_golden() {
+    assert_sql(
+        &BigQueryDialect,
+        "SELECT `status`, SUM(`total`) AS `revenue` FROM `orders` WHERE (`total` >= ? AND `status` IN (?, ?)) GROUP BY `status` ORDER BY `revenue` DESC LIMIT 25",
+        3,
+    );
+}
+
+#[test]
+fn snowflake_golden() {
+    assert_sql(
+        &SnowflakeDialect,
+        r#"SELECT "status", SUM("total") AS "revenue" FROM "orders" WHERE ("total" >= ? AND "status" IN (?, ?)) GROUP BY "status" ORDER BY "revenue" DESC LIMIT 25"#,
+        3,
+    );
+}
+
+#[test]
+fn clickhouse_golden() {
+    // Typed substitution parameters: Float64 for the numeric, String for text.
+    assert_sql(
+        &ClickHouseDialect,
+        "SELECT `status`, SUM(`total`) AS `revenue` FROM `orders` WHERE (`total` >= {p1:Float64} AND `status` IN ({p2:String}, {p3:String})) GROUP BY `status` ORDER BY `revenue` DESC LIMIT 25",
         3,
     );
 }

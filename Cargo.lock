@@ -719,6 +719,7 @@ dependencies = [
  "async-trait",
  "gauss-core",
  "gauss-query",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

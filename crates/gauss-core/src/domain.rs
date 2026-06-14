@@ -26,6 +26,12 @@ pub enum DataSourceKind {
     Postgres,
     MySql,
     Sqlite,
+    /// Google BigQuery (REST `jobs.query`, positional `?` parameters).
+    BigQuery,
+    /// Snowflake (SQL REST API, positional `?` bindings).
+    Snowflake,
+    /// ClickHouse (HTTP interface, `{name:Type}` substitution parameters).
+    ClickHouse,
     /// A source whose dialect is standard-SQL-compatible.
     Generic,
 }
