@@ -118,13 +118,29 @@ reference platform.
 
 ---
 
-## Phase 4 — AI depth, content portability, polish
+## Phase 4 — Content, web UX, portability, hardening (in progress)
+
+Delivered (compiling + tested):
+
+- [x] **Saved questions, dashboards, collections** — persisted via a generic
+      `ContentRepository` (one table, typed JSON) across all four stores;
+      endpoints to create/list/get/delete + **run a saved question**.
+- [x] **Content export/import** — `GET /api/export` / `POST /api/import`
+      (admin) for portable bundles of collections/cards/dashboards.
+- [x] **Web UI** on the reused React frontend: a **query builder** (pick
+      source/table/fields, filter, summarize + group-by), **run with table +
+      bar chart**, **save questions**, **saved-questions runner**, and a
+      **natural-language Ask** panel — all on the typed API client.
+- [x] **Performance harness** (`cargo run -p gauss-query --example
+      bench_compile`) + **`deny.toml`** supply-chain policy for `cargo deny`.
+
+Remaining for Phase 4:
 
 - [ ] Deepen NL2SQL governance: clarifying questions, multi-turn, lineage.
 - [ ] MCP agent workflows (tool chaining under policy + audit).
-- [ ] Content export/import (portable dashboards/questions).
-- [ ] Web UI/UX refresh on the reused frontend; TUI feature parity for ops.
-- [ ] Performance hardening + SBOM/supply-chain automation per release.
+- [ ] Richer visualizations (line/area/pie, pivot) + dashboard layout editor.
+- [ ] SBOM emission + `cargo deny`/`cargo audit` wired into CI.
+- [ ] TUI feature parity for the new content surfaces.
 
 ---
 

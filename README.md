@@ -145,18 +145,22 @@ docs/                 strategy, architecture, roadmap, ADRs
 
 ## Status
 
-GaussAnalytics is in active development. **Phases 0–3 are complete**: persistent
-storage (`sqlx`, **SQLite / Postgres / MySQL**, with migrations), data-source
-drivers that **execute queries, discover schema, and fingerprint columns**,
-authentication (sessions, **persisted per-user grants**, mandatory-auth
-middleware, **rotatable API keys**), data-source management, a **background
-scheduler with query alerts**, **signed-token embedding**, a **query-result
-cache**, a **differential-testing harness**, a **contract-compatibility suite**,
-and an admin **TUI that reads live data**. `cargo test --workspace` is green.
+GaussAnalytics is in active development. **Phases 0–3 are complete and Phase 4
+is well underway.** Highlights: persistent storage (`sqlx`, **SQLite / Postgres
+/ MySQL**), drivers that **execute queries, discover schema, and fingerprint
+columns**, auth (sessions, **persisted per-user grants**, mandatory-auth
+middleware, **rotatable API keys**, **signed-token embedding**), data-source
+management, a **scheduler with query alerts**, a **query-result cache**, and now
+the BI core — **saved questions, dashboards, collections, content
+export/import**, and a **web UI** (query builder + table/bar chart + saved
+questions + natural-language Ask). Plus a **differential-testing harness**, a
+**contract-compatibility suite**, an admin **TUI**, a **compile benchmark**
+(~500k queries/sec/core), and a **`cargo deny`** supply-chain policy.
+`cargo test --workspace` is green.
 
 See [**how GaussAnalytics compares**](docs/COMPARISON.md) to the reference
-platform, and the [Roadmap](docs/ROADMAP.md) for Phase 4 (visualization/dashboard
-UX, driver breadth, content portability, deeper agentic AI).
+platform (with an honest list of remaining gaps), and the
+[Roadmap](docs/ROADMAP.md).
 
 ## Development
 
