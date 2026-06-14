@@ -12,7 +12,7 @@ use axum::Json;
 use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
-    Card, Collection, Dashboard, DashboardParameter, ParamBinding, ParamKind,
+    Card, CardLayout, Collection, Dashboard, DashboardParameter, ParamBinding, ParamKind,
 };
 use gauss_core::error::CoreError;
 use gauss_core::gql::{Filter, Literal, Query};
@@ -192,6 +192,8 @@ pub struct CreateDashboardRequest {
     pub parameters: Vec<DashboardParameter>,
     #[serde(default)]
     pub bindings: Vec<ParamBinding>,
+    #[serde(default)]
+    pub layout: Vec<CardLayout>,
 }
 
 pub async fn create_dashboard(
@@ -207,17 +209,45 @@ pub async fn create_dashboard(
         card_ids: req.card_ids,
         parameters: req.parameters,
         bindings: req.bindings,
+        layout: req.layout,
     };
+    persist_dashboard(&st, &dash).await?;
+    Ok(Json(dash))
+}
+
+async fn persist_dashboard(st: &AppState, dash: &Dashboard) -> Result<(), ApiError> {
     st.store
         .put_content(ContentRecord {
             id: dash.id,
             kind: KIND_DASHBOARD.into(),
             collection_id: dash.collection_id,
             name: dash.name.clone(),
-            body_json: json_of(&dash)?,
+            body_json: json_of(dash)?,
             created_at: Utc::now(),
         })
         .await?;
+    Ok(())
+}
+
+/// Replace a dashboard's definition (name, cards, filters, layout). Used by the
+/// editor to persist drag-and-drop reordering and per-card widths.
+pub async fn update_dashboard(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<CreateDashboardRequest>,
+) -> Result<Json<Dashboard>, ApiError> {
+    require_create(&st, &headers).await?;
+    let dash = Dashboard {
+        id,
+        name: req.name,
+        collection_id: req.collection_id,
+        card_ids: req.card_ids,
+        parameters: req.parameters,
+        bindings: req.bindings,
+        layout: req.layout,
+    };
+    persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))
 }
 

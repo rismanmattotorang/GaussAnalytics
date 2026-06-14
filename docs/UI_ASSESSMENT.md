@@ -22,7 +22,7 @@ Legend: ✅ covered · 🟡 partial · ⬜ not yet.
 | Visualizations | ✅ many (bar/line/area/pie/map/funnel/pivot/…) | 🟡 table, **bar, line, pie, pivot** + chart picker | — |
 | Pivot tables | ✅ | ✅ pivot view on 3-column aggregates | Pure client transform over cached results |
 | Save questions | ✅ | ✅ | Persisted via generic content store |
-| Dashboards | ✅ drag-and-drop layout, filters, params | ✅ compose from cards + **shared filters** + grid (drag-layout pending) | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
+| Dashboards | ✅ drag-and-drop layout, filters, params | ✅ compose + **shared filters** + **drag-and-drop layout** + **cross-filter** + **auto-refresh** | Filters become **bound GQL predicates** → parameterized SQL, permission-checked, cached |
 | Dashboard subscriptions/alerts | ✅ | 🟡 **query alerts** via scheduler (no email/slack channels UI) | Lean Tokio scheduler (no Quartz) |
 
 ## AI / agentic
@@ -66,8 +66,9 @@ These are independent of the UI and benefit every screen:
 ## Honest gaps (tracked in `ROADMAP.md`)
 
 1. **Visualization breadth** — area/scatter/map/funnel/combo charts.
-2. **Dashboard editor** — drag-and-drop layout, cross-filtering, auto-refresh
-   (compose-from-cards and **shared filters** now exist; bound to card fields).
+2. **Dashboard polish** — tabbed/nested dashboards and dashboard-to-dashboard
+   linking (compose, shared filters, **drag-and-drop layout, cross-filtering,
+   and auto-refresh** now exist).
 3. **SQL editor polish** — snippets, query variables/parameters, autocomplete
    (the read-only-guarded editor itself now exists).
 4. **Subscription delivery** — email/Slack channels and schedules UI.

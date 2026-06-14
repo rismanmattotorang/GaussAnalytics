@@ -40,13 +40,26 @@ function PivotTable({ result }: { result: QueryResult }) {
 
 const PALETTE = ["#38bdf8", "#818cf8", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6"];
 
-function BarChart({ labels, values }: { labels: string[]; values: number[] }) {
+function BarChart({
+  labels,
+  values,
+  onSelect,
+}: {
+  labels: string[];
+  values: number[];
+  onSelect?: (value: string) => void;
+}) {
   const max = Math.max(1, ...values);
   return (
     <div className="chart">
       {values.map((v, i) => (
         <div className="chart__row" key={i}>
-          <span className="chart__label">{labels[i]}</span>
+          <span
+            className={onSelect ? "chart__label chart__label--click" : "chart__label"}
+            onClick={onSelect ? () => onSelect(labels[i]) : undefined}
+          >
+            {labels[i]}
+          </span>
           <span className="chart__bar" style={{ width: `${(v / max) * 100}%` }} />
           <span className="chart__value">{v}</span>
         </div>
@@ -98,7 +111,14 @@ function PieChart({ labels, values }: { labels: string[]; values: number[] }) {
   );
 }
 
-export function ResultView({ result }: { result: QueryResult }) {
+export function ResultView({
+  result,
+  onSelect,
+}: {
+  result: QueryResult;
+  /** Called when the user clicks a first-column category value (cross-filter). */
+  onSelect?: (column: string, value: unknown) => void;
+}) {
   const { columns, rows } = result;
   const chartable = isChartable(result);
   const pivotable = isPivotable(result);
@@ -126,7 +146,13 @@ export function ResultView({ result }: { result: QueryResult }) {
         )}
       </div>
 
-      {active === "bar" && <BarChart labels={data.labels} values={data.values} />}
+      {active === "bar" && (
+        <BarChart
+          labels={data.labels}
+          values={data.values}
+          onSelect={onSelect ? (v) => onSelect(columns[0], v) : undefined}
+        />
+      )}
       {active === "line" && <LineChart values={data.values} />}
       {active === "pie" && <PieChart labels={data.labels} values={data.values} />}
       {active === "pivot" && <PivotTable result={result} />}
@@ -145,7 +171,15 @@ export function ResultView({ result }: { result: QueryResult }) {
               {rows.slice(0, 200).map((row, i) => (
                 <tr key={i}>
                   {row.map((cell, j) => (
-                    <td key={j}>{cell === null ? "∅" : String(cell)}</td>
+                    <td
+                      key={j}
+                      className={onSelect && j === 0 ? "td--click" : undefined}
+                      onClick={
+                        onSelect && j === 0 ? () => onSelect(columns[0], cell) : undefined
+                      }
+                    >
+                      {cell === null ? "∅" : String(cell)}
+                    </td>
                   ))}
                 </tr>
               ))}
