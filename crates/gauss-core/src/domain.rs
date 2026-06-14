@@ -201,8 +201,21 @@ pub struct ParamBinding {
     pub op: crate::gql::CompareOp,
 }
 
+fn default_width() -> u8 {
+    1
+}
+
+/// Layout entry for one card on a dashboard. The order of the `layout` vector is
+/// the display order; `w` is the column span (1 = half width, 2 = full).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CardLayout {
+    pub card_id: Uuid,
+    #[serde(default = "default_width")]
+    pub w: u8,
+}
+
 /// A dashboard arranges cards for at-a-glance consumption, optionally with
-/// shared filter parameters that apply across its cards.
+/// shared filter parameters that apply across its cards and a saved layout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Dashboard {
     pub id: Uuid,
@@ -213,4 +226,7 @@ pub struct Dashboard {
     pub parameters: Vec<DashboardParameter>,
     #[serde(default)]
     pub bindings: Vec<ParamBinding>,
+    /// Saved drag-and-drop layout (order + per-card width). Empty = default grid.
+    #[serde(default)]
+    pub layout: Vec<CardLayout>,
 }

@@ -136,6 +136,11 @@ export interface ParamBinding {
   op?: CompareOp;
 }
 
+export interface CardLayout {
+  card_id: string;
+  w: number;
+}
+
 export interface Dashboard {
   id: string;
   name: string;
@@ -143,6 +148,7 @@ export interface Dashboard {
   card_ids: string[];
   parameters?: DashboardParameter[];
   bindings?: ParamBinding[];
+  layout?: CardLayout[];
 }
 
 export interface DashboardCardResult {
@@ -224,6 +230,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ values }),
     }),
+  updateDashboard: (
+    id: string,
+    body: {
+      name: string;
+      card_ids: string[];
+      parameters?: DashboardParameter[];
+      bindings?: ParamBinding[];
+      layout?: CardLayout[];
+    },
+    token: string,
+  ) => authed<Dashboard>(`/dashboards/${id}`, "PUT", token, body),
   exportContent: (token: string) =>
     authed<{ collections: unknown[]; cards: Card[]; dashboards: Dashboard[] }>(
       "/export",

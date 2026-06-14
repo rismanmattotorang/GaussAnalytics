@@ -154,10 +154,15 @@ Delivered (compiling + tested):
       (parameterized SQL, permission-checked, cached). A filter bar drives the
       grid in the UI. (Superior to string-interpolated dashboard filters.)
 
+- [x] **Drag-and-drop dashboard layout + cross-filtering + auto-refresh** —
+      a saved per-card layout (order + width, `PUT /api/dashboards/{id}`),
+      click-a-category cross-filtering bound to shared parameters, and a
+      per-board auto-refresh timer.
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
 - [ ] More chart types (area/scatter/map/funnel/combo).
-- [ ] Drag-and-drop dashboard *layout* editor, cross-filtering, auto-refresh.
+- [ ] Tabbed/nested dashboards + dashboard-to-dashboard linking.
 - [ ] SQL editor polish (snippets, query variables/parameters); models/metrics layer.
 - [ ] Subscription delivery channels (email/Slack) UI.
 - [ ] Driver long-tail (BigQuery/Snowflake/Redshift/ClickHouse).

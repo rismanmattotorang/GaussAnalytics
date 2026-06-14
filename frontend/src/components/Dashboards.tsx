@@ -8,7 +8,14 @@ import {
   type ParamBinding,
   type ParamKind,
 } from "../api/client";
+import { matchingParam, move, orderedLayout, type LayoutItem } from "../lib/dashboard";
 import { ResultView } from "./ResultView";
+
+function valuesObj(filters: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(filters)) if (v !== "") out[k] = v;
+  return out;
+}
 
 export function Dashboards({ token }: { token: string | null }) {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
@@ -16,6 +23,9 @@ export function Dashboards({ token }: { token: string | null }) {
   const [open, setOpen] = useState<Dashboard | null>(null);
   const [results, setResults] = useState<DashboardCardResult[]>([]);
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [layout, setLayout] = useState<LayoutItem[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
   // Create-form state.
@@ -35,6 +45,7 @@ export function Dashboards({ token }: { token: string | null }) {
   useEffect(load, []);
 
   const cardTitle = (id: string) => cards.find((c) => c.id === id)?.name ?? id;
+  const resultFor = (id: string) => results.find((r) => r.card_id === id);
 
   async function runBoard(d: Dashboard, values: Record<string, unknown>) {
     setError(null);
@@ -49,7 +60,55 @@ export function Dashboards({ token }: { token: string | null }) {
     setOpen(d);
     setResults([]);
     setFilterValues({});
+    setLayout(orderedLayout(d));
+    setAutoRefresh(0);
     await runBoard(d, {});
+  }
+
+  // Auto-refresh timer.
+  useEffect(() => {
+    if (!open || autoRefresh <= 0) return;
+    const handle = setInterval(() => runBoard(open, valuesObj(filterValues)), autoRefresh * 1000);
+    return () => clearInterval(handle);
+  }, [open, autoRefresh, filterValues]);
+
+  function crossFilter(column: string, value: unknown) {
+    if (!open) return;
+    const param = matchingParam(open.parameters, column);
+    if (!param) return;
+    const next = { ...filterValues, [param]: String(value) };
+    setFilterValues(next);
+    runBoard(open, valuesObj(next));
+  }
+
+  function onDrop(to: number) {
+    if (dragIndex === null) return;
+    setLayout((l) => move(l, dragIndex, to));
+    setDragIndex(null);
+  }
+
+  function toggleWidth(i: number) {
+    setLayout((l) => l.map((x, j) => (j === i ? { ...x, w: x.w === 2 ? 1 : 2 } : x)));
+  }
+
+  async function saveLayout() {
+    if (!token || !open) return;
+    try {
+      const updated = await api.updateDashboard(
+        open.id,
+        {
+          name: open.name,
+          card_ids: open.card_ids,
+          parameters: open.parameters,
+          bindings: open.bindings,
+          layout: layout.map((l) => ({ card_id: l.card_id, w: l.w })),
+        },
+        token,
+      );
+      setOpen(updated);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   // --- create-form helpers ---
@@ -71,15 +130,11 @@ export function Dashboards({ token }: { token: string | null }) {
   function setBindingField(i: number, patch: Partial<ParamBinding>) {
     setBindings((b) => b.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   }
-
   async function create() {
     if (!token || !name) return;
     setError(null);
     try {
-      await api.createDashboard(
-        { name, card_ids: selected, parameters: params, bindings },
-        token,
-      );
+      await api.createDashboard({ name, card_ids: selected, parameters: params, bindings }, token);
       setName("");
       setSelected([]);
       setParams([]);
@@ -98,46 +153,69 @@ export function Dashboards({ token }: { token: string | null }) {
         </button>
         <h2>{open.name}</h2>
 
-        {(open.parameters?.length ?? 0) > 0 && (
-          <div className="dash__filters">
-            {open.parameters!.map((p) => (
-              <label key={p.name}>
-                {p.name}
-                <input
-                  type={p.kind === "number" ? "number" : "text"}
-                  value={filterValues[p.name] ?? ""}
-                  onChange={(e) =>
-                    setFilterValues((v) => ({ ...v, [p.name]: e.target.value }))
-                  }
-                />
-              </label>
-            ))}
-            <button
-              onClick={() => {
-                const values: Record<string, unknown> = {};
-                for (const [k, v] of Object.entries(filterValues)) {
-                  if (v !== "") values[k] = v;
-                }
-                runBoard(open, values);
-              }}
-            >
-              Apply filters
+        <div className="dash__bar">
+          {(open.parameters ?? []).map((p) => (
+            <label key={p.name}>
+              {p.name}
+              <input
+                type={p.kind === "number" ? "number" : "text"}
+                value={filterValues[p.name] ?? ""}
+                onChange={(e) => setFilterValues((v) => ({ ...v, [p.name]: e.target.value }))}
+              />
+            </label>
+          ))}
+          {(open.parameters?.length ?? 0) > 0 && (
+            <button onClick={() => runBoard(open, valuesObj(filterValues))}>Apply</button>
+          )}
+          <label>
+            auto-refresh
+            <select value={autoRefresh} onChange={(e) => setAutoRefresh(Number(e.target.value))}>
+              <option value={0}>off</option>
+              <option value={10}>10s</option>
+              <option value={30}>30s</option>
+              <option value={60}>60s</option>
+            </select>
+          </label>
+          {token && (
+            <button className="link" onClick={saveLayout}>
+              save layout
             </button>
-          </div>
-        )}
+          )}
+        </div>
+        <p className="muted">
+          Tip: click a category to cross-filter{token ? "; drag tiles to reorder" : ""}.
+        </p>
 
         {error && <p className="app__error">{error}</p>}
         <div className="dash__grid">
-          {results.map((r) => (
-            <div className="dash__tile" key={r.card_id}>
-              <h3>{r.name}</h3>
-              {r.result ? (
-                <ResultView result={r.result} />
-              ) : (
-                <p className="app__error">{r.error ?? "no result"}</p>
-              )}
-            </div>
-          ))}
+          {layout.map((item, i) => {
+            const r = resultFor(item.card_id);
+            return (
+              <div
+                className="dash__tile"
+                key={item.card_id}
+                style={{ gridColumn: item.w === 2 ? "span 2" : "span 1" }}
+                draggable={!!token}
+                onDragStart={() => setDragIndex(i)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => onDrop(i)}
+              >
+                <div className="dash__tilehead">
+                  <h3>{r?.name ?? cardTitle(item.card_id)}</h3>
+                  {token && (
+                    <button className="link" onClick={() => toggleWidth(i)}>
+                      {item.w === 2 ? "½" : "▭"}
+                    </button>
+                  )}
+                </div>
+                {r?.result ? (
+                  <ResultView result={r.result} onSelect={crossFilter} />
+                ) : (
+                  <p className="app__error">{r?.error ?? "no result"}</p>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -158,9 +236,7 @@ export function Dashboards({ token }: { token: string | null }) {
               <span className="muted">
                 {" "}
                 · {d.card_ids.length} card(s)
-                {(d.parameters?.length ?? 0) > 0
-                  ? ` · ${d.parameters!.length} filter(s)`
-                  : ""}
+                {(d.parameters?.length ?? 0) > 0 ? ` · ${d.parameters!.length} filter(s)` : ""}
               </span>
             </li>
           ))}
@@ -187,7 +263,10 @@ export function Dashboards({ token }: { token: string | null }) {
           </div>
 
           <p className="muted">
-            Shared filters <button className="link" onClick={addParam}>+ add</button>
+            Shared filters{" "}
+            <button className="link" onClick={addParam}>
+              + add
+            </button>
           </p>
           {params.map((p, i) => (
             <div className="dash__row" key={i}>

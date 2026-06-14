@@ -88,7 +88,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/dashboards/{id}",
-            get(content::get_dashboard).delete(content::delete_dashboard),
+            get(content::get_dashboard)
+                .put(content::update_dashboard)
+                .delete(content::delete_dashboard),
         )
         .route("/dashboards/{id}/run", post(content::run_dashboard))
         .route("/export", get(content::export_content))
@@ -1704,6 +1706,7 @@ mod tests {
                 field: "status".into(),
                 op: CompareOp::Eq,
             }],
+            layout: vec![],
         };
         store
             .put_content(ContentRecord {
@@ -1746,6 +1749,59 @@ mod tests {
         assert_eq!(filtered.0[0].result.as_ref().unwrap().rows.len(), 2);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn update_dashboard_persists_layout() {
+        use axum::extract::Path;
+        use gauss_core::domain::CardLayout;
+
+        let (st, _db) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+        let card_id = Uuid::new_v4();
+
+        let created = content::create_dashboard(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::CreateDashboardRequest {
+                name: "Board".into(),
+                collection_id: None,
+                card_ids: vec![card_id],
+                parameters: vec![],
+                bindings: vec![],
+                layout: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+        let id = created.0.id;
+
+        let _ = content::update_dashboard(
+            State(st.clone()),
+            Path(id),
+            hdr,
+            Json(content::CreateDashboardRequest {
+                name: "Board v2".into(),
+                collection_id: None,
+                card_ids: vec![card_id],
+                parameters: vec![],
+                bindings: vec![],
+                layout: vec![CardLayout { card_id, w: 2 }],
+            }),
+        )
+        .await
+        .unwrap();
+
+        let got = content::get_dashboard(State(st), Path(id)).await.unwrap();
+        assert_eq!(got.0.name, "Board v2");
+        assert_eq!(got.0.layout.len(), 1);
+        assert_eq!(got.0.layout[0].w, 2);
     }
 
     #[tokio::test]
