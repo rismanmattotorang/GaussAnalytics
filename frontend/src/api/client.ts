@@ -17,6 +17,7 @@ export interface Database {
   name: string;
   kind: DataSourceKind;
   is_synced: boolean;
+  connection_uri?: string | null;
   created_at: string;
 }
 
@@ -83,6 +84,17 @@ export interface GuardedQuery {
   confidence?: number | null;
 }
 
+/** The tabular result of executing a query against a data source. */
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+}
+
+export interface Session {
+  token: string;
+  expires_at: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "content-type": "application/json" },
@@ -103,9 +115,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ database_id, query }),
     }),
+  run: (database_id: string, query: Query) =>
+    request<QueryResult>("/dataset/run", {
+      method: "POST",
+      body: JSON.stringify({ database_id, query }),
+    }),
   nl2sql: (database_id: string, prompt: string) =>
     request<GuardedQuery>("/nl2sql", {
       method: "POST",
       body: JSON.stringify({ database_id, prompt }),
+    }),
+  login: (email: string, password: string) =>
+    request<Session>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
     }),
 };

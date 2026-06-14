@@ -38,6 +38,10 @@ pub struct Database {
     pub kind: DataSourceKind,
     /// Whether schema sync has populated this database's tables.
     pub is_synced: bool,
+    /// Connection URI used by a driver to reach the source (e.g.
+    /// `sqlite://data/source.db`). `None` for sources not yet configured.
+    #[serde(default)]
+    pub connection_uri: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

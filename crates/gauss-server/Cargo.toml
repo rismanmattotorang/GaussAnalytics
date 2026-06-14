@@ -12,6 +12,7 @@ gauss-core.workspace = true
 gauss-config.workspace = true
 gauss-query.workspace = true
 gauss-db.workspace = true
+gauss-drivers.workspace = true
 gauss-auth.workspace = true
 gauss-mcp-gateway.workspace = true
 gauss-nl2sql.workspace = true
@@ -28,3 +29,4 @@ chrono.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+sqlx = { workspace = true }

@@ -1,11 +1,9 @@
 //! `gauss-server` — the GaussAnalytics HTTP/JSON API.
 //!
 //! Built on axum, this crate exposes the contract the reused frontend and the
-//! administration TUI both speak. Phase 1 wires the always-on core (health,
-//! version, databases, GQL compilation) plus the AI integration endpoints
-//! (NL2SQL, MCP) when those are enabled in configuration. Query *execution*
-//! against connected sources lands in Phase 2; today the dataset endpoint
-//! returns the compiled, parameterized SQL so the engine is verifiable.
+//! administration TUI both speak: health/version, authentication, databases,
+//! GQL compilation *and execution* against connected sources, plus the AI
+//! integration endpoints (NL2SQL, MCP) when enabled in configuration.
 
 #![forbid(unsafe_code)]
 
@@ -55,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/me", get(auth_me))
         .route("/databases", get(list_databases))
         .route("/dataset/compile", post(compile_dataset))
+        .route("/dataset/run", post(run_dataset))
         .route("/nl2sql", post(nl2sql_translate))
         .route("/mcp/servers", get(mcp_list_servers))
         .route("/mcp/invoke", post(mcp_invoke))
@@ -168,16 +167,19 @@ struct CompileRequest {
     query: Query,
 }
 
-async fn compile_dataset(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<CompileRequest>,
-) -> Result<Json<CompiledQuery>, ApiError> {
-    // If the caller presents a session, enforce read permission on the target
-    // database. Anonymous calls remain open in this scaffold; Phase 2 makes
-    // authentication mandatory once per-database grants are persisted.
-    if auth::bearer_token(&headers).is_some() {
-        let current = auth::authenticate(&st, &headers).await?;
+/// Authorize, ground against metadata, and compile a request to SQL.
+///
+/// Shared by the compile-only and execute endpoints. If the caller presents a
+/// session, read permission on the target database is enforced; anonymous calls
+/// remain open in this scaffold (Phase 2 makes auth mandatory once per-database
+/// grants are persisted).
+async fn prepare_query(
+    st: &AppState,
+    headers: &HeaderMap,
+    req: &CompileRequest,
+) -> Result<(Database, CompiledQuery), ApiError> {
+    if auth::bearer_token(headers).is_some() {
+        let current = auth::authenticate(st, headers).await?;
         current.perms.require(Permission::ReadDatabase {
             database_id: req.database_id,
         })?;
@@ -202,7 +204,35 @@ async fn compile_dataset(
 
     let dialect = gauss_query::dialect::for_kind(db.kind);
     let compiled = gauss_query::compile(&req.query, dialect.as_ref())?;
+    Ok((db, compiled))
+}
+
+async fn compile_dataset(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CompileRequest>,
+) -> Result<Json<CompiledQuery>, ApiError> {
+    let (_db, compiled) = prepare_query(&st, &headers, &req).await?;
     Ok(Json(compiled))
+}
+
+/// Compile *and execute* a GQL query against its connected data source,
+/// returning the resulting rows.
+async fn run_dataset(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CompileRequest>,
+) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
+    let (db, compiled) = prepare_query(&st, &headers, &req).await?;
+    let uri = db.connection_uri.ok_or_else(|| {
+        CoreError::InvalidQuery(format!(
+            "data source `{}` has no connection configured",
+            db.name
+        ))
+    })?;
+    let driver = gauss_drivers::connect(db.kind, &uri).await?;
+    let result = driver.run(&compiled).await?;
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -295,13 +325,15 @@ async fn mcp_invoke(
 // ---------------------------------------------------------------------------
 
 /// Seed a small demo data source so a fresh instance is immediately explorable
-/// (and so `/api/dataset/compile` works out of the box).
-pub async fn seed_demo(store: &InMemoryStore) -> gauss_core::CoreResult<Uuid> {
+/// (and so `/api/dataset/compile` works out of the box). Works against any
+/// store implementation.
+pub async fn seed_demo<S: DatabaseRepository + ?Sized>(store: &S) -> gauss_core::CoreResult<Uuid> {
     let db = Database {
         id: Uuid::new_v4(),
         name: "demo".into(),
         kind: DataSourceKind::Postgres,
         is_synced: true,
+        connection_uri: None,
         created_at: Utc::now(),
     };
     let db_id = db.id;
@@ -354,11 +386,47 @@ pub async fn ensure_admin(
 /// Boxed error used by the server bootstrap (keeps `anyhow` out of the deps).
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
+/// Build the application store from configuration: a persistent `sqlx`/SQLite
+/// store for `sqlite*` URLs (creating the file + running migrations), otherwise
+/// the in-memory store.
+async fn build_store(config: &AppConfig) -> Result<Arc<dyn Store>, BoxError> {
+    let url = &config.database.url;
+    if url.starts_with("sqlite") {
+        if let Some(path) = sqlite_file_path(url) {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+        }
+        Ok(Arc::new(gauss_db::SqliteStore::connect(url).await?))
+    } else {
+        Ok(Arc::new(InMemoryStore::new()))
+    }
+}
+
+/// Extract the filesystem path from a SQLite URL, or `None` for in-memory.
+fn sqlite_file_path(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("sqlite://")
+        .or_else(|| url.strip_prefix("sqlite:"))?;
+    let path = rest.split('?').next().unwrap_or(rest);
+    if path.is_empty() || path == ":memory:" {
+        None
+    } else {
+        Some(path.to_string())
+    }
+}
+
 /// Run the HTTP server until the process is terminated.
 pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
     let addr = config.bind_addr();
-    let store = Arc::new(InMemoryStore::new());
-    seed_demo(&store).await?;
+    let store = build_store(&config).await?;
+
+    // Seed the demo metadata on a fresh instance (idempotent).
+    if store.list_databases().await?.is_empty() {
+        seed_demo(store.as_ref()).await?;
+    }
 
     // Bootstrap an administrator from the environment when provided.
     if let (Ok(email), Ok(password)) = (
@@ -385,7 +453,7 @@ mod tests {
 
     async fn test_state() -> (AppState, Uuid) {
         let store = Arc::new(InMemoryStore::new());
-        let db_id = seed_demo(&store).await.unwrap();
+        let db_id = seed_demo(store.as_ref()).await.unwrap();
         let cfg = AppConfig::default();
         (AppState::new(cfg, store).unwrap(), db_id)
     }
@@ -520,5 +588,92 @@ mod tests {
         )
         .await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn run_dataset_executes_against_a_sqlite_source() {
+        use gauss_db::DatabaseRepository as _;
+        use gauss_drivers::Driver as _;
+
+        // A unique temporary SQLite source database.
+        let path = std::env::temp_dir().join(format!("gauss_run_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+
+        // Create + seed the source.
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL, status TEXT)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (total, status) VALUES (?,?),(?,?)")
+            .bind(10.5)
+            .bind("paid")
+            .bind(3.0)
+            .bind("refunded")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        // Register the source in the metadata store and sync its schema.
+        let store = Arc::new(InMemoryStore::new());
+        let db = Database {
+            id: Uuid::new_v4(),
+            name: "sales".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: true,
+            connection_uri: Some(uri.clone()),
+            created_at: Utc::now(),
+        };
+        let db_id = db.id;
+        store.create_database(db).await.unwrap();
+        for dt in setup.sync_schema().await.unwrap() {
+            store
+                .upsert_table(Table {
+                    id: Uuid::new_v4(),
+                    database_id: db_id,
+                    name: dt.name,
+                    fields: dt
+                        .columns
+                        .into_iter()
+                        .map(|c| Field {
+                            id: Uuid::new_v4(),
+                            name: c.name,
+                            field_type: c.field_type,
+                        })
+                        .collect(),
+                })
+                .await
+                .unwrap();
+        }
+
+        let st = AppState::new(AppConfig::default(), store).unwrap();
+
+        let mut q = Query::new("orders");
+        q.fields = vec!["status".into(), "total".into()];
+        q.filters = vec![Filter::Compare {
+            field: "status".into(),
+            op: CompareOp::Eq,
+            value: Literal::Text("paid".into()),
+        }];
+
+        let resp = run_dataset(
+            State(st),
+            HeaderMap::new(),
+            Json(CompileRequest {
+                database_id: db_id,
+                query: q,
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.0.columns,
+            vec!["status".to_string(), "total".to_string()]
+        );
+        assert_eq!(resp.0.rows.len(), 1);
+        assert_eq!(resp.0.rows[0][0], serde_json::json!("paid"));
+
+        let _ = std::fs::remove_file(&path);
     }
 }

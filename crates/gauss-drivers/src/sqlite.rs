@@ -5,8 +5,9 @@ use gauss_core::domain::FieldType;
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::{CompiledQuery, SqlParam};
 use serde_json::{json, Value as JsonValue};
-use sqlx::sqlite::{SqlitePool, SqliteRow};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Row};
+use std::str::FromStr;
 
 use crate::{DiscoveredColumn, DiscoveredTable, Driver, QueryResult};
 
@@ -16,9 +17,16 @@ pub struct SqliteDriver {
 }
 
 impl SqliteDriver {
-    /// Connect to a SQLite database by URL (e.g. `sqlite://data/source.db`).
+    /// Connect to a SQLite database by URL (e.g. `sqlite://data/source.db`),
+    /// creating the database file if it does not yet exist.
     pub async fn connect(url: &str) -> CoreResult<Self> {
-        let pool = SqlitePool::connect(url).await.map_err(storage)?;
+        let opts = SqliteConnectOptions::from_str(url)
+            .map_err(storage)?
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .connect_with(opts)
+            .await
+            .map_err(storage)?;
         Ok(Self { pool })
     }
 

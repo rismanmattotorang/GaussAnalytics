@@ -24,9 +24,16 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    /// Connect to the application database and run pending migrations.
+    /// Connect to the application database (creating the file if missing) and
+    /// run pending migrations.
     pub async fn connect(url: &str) -> CoreResult<Self> {
-        let pool = SqlitePool::connect(url).await.map_err(storage)?;
+        let opts = SqliteConnectOptions::from_str(url)
+            .map_err(storage)?
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .connect_with(opts)
+            .await
+            .map_err(storage)?;
         run_migrations(&pool).await?;
         Ok(Self { pool })
     }
@@ -169,12 +176,14 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<User> {
 impl DatabaseRepository for SqliteStore {
     async fn create_database(&self, db: Database) -> CoreResult<()> {
         sqlx::query(
-            "INSERT INTO data_sources (id, name, kind, is_synced, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO data_sources (id, name, kind, is_synced, connection_uri, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(db.id.to_string())
         .bind(&db.name)
         .bind(kind_to_str(db.kind))
         .bind(db.is_synced as i64)
+        .bind(db.connection_uri)
         .bind(db.created_at.to_rfc3339())
         .execute(&self.pool)
         .await
@@ -184,7 +193,7 @@ impl DatabaseRepository for SqliteStore {
 
     async fn list_databases(&self) -> CoreResult<Vec<Database>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, is_synced, created_at FROM data_sources ORDER BY name",
+            "SELECT id, name, kind, is_synced, connection_uri, created_at FROM data_sources ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await
@@ -194,7 +203,7 @@ impl DatabaseRepository for SqliteStore {
 
     async fn database_by_id(&self, id: Uuid) -> CoreResult<Option<Database>> {
         let row = sqlx::query(
-            "SELECT id, name, kind, is_synced, created_at FROM data_sources WHERE id = ?",
+            "SELECT id, name, kind, is_synced, connection_uri, created_at FROM data_sources WHERE id = ?",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -250,6 +259,7 @@ fn database_from_row(row: sqlx::sqlite::SqliteRow) -> CoreResult<Database> {
         name: row.try_get("name").map_err(storage)?,
         kind: kind_from_str(&row.try_get::<String, _>("kind").map_err(storage)?)?,
         is_synced: row.try_get::<i64, _>("is_synced").map_err(storage)? != 0,
+        connection_uri: row.try_get("connection_uri").map_err(storage)?,
         created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,
     })
 }
@@ -358,6 +368,7 @@ mod tests {
             name: "warehouse".into(),
             kind: DataSourceKind::Postgres,
             is_synced: true,
+            connection_uri: Some("sqlite://warehouse.db".into()),
             created_at: Utc::now(),
         };
         s.create_database(db.clone()).await.unwrap();

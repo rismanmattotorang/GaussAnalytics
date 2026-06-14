@@ -56,6 +56,10 @@ Scaffolded in this changeset (compiling + tested):
 - [x] Login / logout / session resolution + a permission gate on dataset
       compilation (authenticated callers are permission-checked).
 - [x] Golden-file query tests across Postgres / MySQL / SQLite / Generic.
+- [x] Live query **execution** endpoint `POST /api/dataset/run`: compile GQL,
+      build a driver from the source's connection, run it, return rows.
+- [x] `serve()` runs on the persistent `SqliteStore` (creates the file, runs
+      migrations, seeds demo idempotently, bootstraps an admin from env).
 
 Remaining for Phase 2:
 
@@ -65,8 +69,8 @@ Remaining for Phase 2:
       grants are persisted; session middleware as a tower layer.
 - [ ] Differential testing harness (compare results across engines).
 - [ ] Contract-compatibility suite exercising the reused frontend client.
-- [ ] Switch the default `serve()` store to `SqliteStore` once admin bootstrap
-      and connection management are finalized.
+- [ ] Data-source CRUD + sync endpoints (register a source, trigger sync) so
+      sources are managed via the API/TUI rather than seeded.
 
 ---
 

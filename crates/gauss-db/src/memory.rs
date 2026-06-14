@@ -182,6 +182,7 @@ mod tests {
             name: "warehouse".into(),
             kind: DataSourceKind::Postgres,
             is_synced: true,
+            connection_uri: None,
             created_at: Utc::now(),
         };
         store.create_database(db.clone()).await.unwrap();

@@ -16,15 +16,16 @@
 pub mod sqlite;
 
 use async_trait::async_trait;
-use gauss_core::domain::FieldType;
-use gauss_core::error::CoreResult;
+use gauss_core::domain::{DataSourceKind, FieldType};
+use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::CompiledQuery;
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 pub use sqlite::SqliteDriver;
 
 /// The tabular result of executing a query.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryResult {
     /// Column names, in result order.
     pub columns: Vec<String>,
@@ -54,4 +55,17 @@ pub trait Driver: Send + Sync {
 
     /// Introspect the source and return its tables and columns.
     async fn sync_schema(&self) -> CoreResult<Vec<DiscoveredTable>>;
+}
+
+/// Build a [`Driver`] for a data source of the given `kind` at `uri`.
+///
+/// SQLite is implemented today; other kinds return an error until their drivers
+/// land (same `sqlx` pool pattern).
+pub async fn connect(kind: DataSourceKind, uri: &str) -> CoreResult<Box<dyn Driver>> {
+    match kind {
+        DataSourceKind::Sqlite => Ok(Box::new(SqliteDriver::connect(uri).await?)),
+        other => Err(CoreError::Integration(format!(
+            "data-source driver for {other:?} is not yet implemented"
+        ))),
+    }
 }
