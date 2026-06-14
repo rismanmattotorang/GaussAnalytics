@@ -69,14 +69,17 @@ Scaffolded in this changeset (compiling + tested):
 - [x] `GET /api/users` (admin) + the **TUI's Databases/Users/Overview tabs read
       live data** from the server (`GAUSS_API_URL` / `GAUSS_API_TOKEN`, `r` to
       refresh).
+- [x] **MySQL** store (`MySqlStore`, dedicated migration set) and driver
+      (`MySqlDriver`) behind the same traits; dispatch by URL scheme. (Live
+      MySQL tests are `#[ignore]`d — set `GAUSS_TEST_MYSQL_URL`.)
+- [x] **Mandatory-auth tower middleware** (`require_auth`) gating all API routes
+      except a small public set, plus static **service API keys**
+      (`GAUSS_API_KEYS`, constant-time compare → service-admin principal).
 
 Remaining for Phase 2:
 
-- [ ] MySQL store and driver implementations (same `sqlx` pattern).
 - [ ] Fingerprinting (value stats) and richer semantic typing during sync.
-- [ ] API keys; make authentication mandatory on read paths once
-      per-database/-collection grants are persisted; session middleware as a
-      tower layer.
+- [ ] Per-user/-database persisted grants + DB-backed (rotatable) API keys.
 - [ ] Differential testing harness (compare results across engines).
 - [ ] Contract-compatibility suite exercising the reused frontend client.
 

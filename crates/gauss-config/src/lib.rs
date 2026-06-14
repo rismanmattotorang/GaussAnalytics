@@ -42,6 +42,15 @@ pub struct DatabaseConfig {
 pub struct SecurityConfig {
     /// Lifetime of an issued session, in seconds.
     pub session_ttl_secs: u64,
+    /// When true, all API routes except a small public set require a valid
+    /// principal (session or API key). Default false for local development.
+    #[serde(default)]
+    pub require_auth: bool,
+    /// Static service API keys (compared in constant time). Configured via
+    /// `GAUSS_API_KEYS` (comma-separated). A request bearing a matching key
+    /// authenticates as a service administrator.
+    #[serde(default)]
+    pub api_keys: Vec<String>,
 }
 
 /// Integration settings for Gaussian's MCP Servers.
@@ -79,6 +88,8 @@ impl Default for AppConfig {
             },
             security: SecurityConfig {
                 session_ttl_secs: 60 * 60 * 24 * 14, // 14 days
+                require_auth: false,
+                api_keys: Vec::new(),
             },
             mcp: McpConfig {
                 enabled: false,
@@ -125,6 +136,16 @@ impl AppConfig {
         }
         if let Some(v) = get("GAUSS_SESSION_TTL_SECS") {
             cfg.security.session_ttl_secs = parse(&v, "GAUSS_SESSION_TTL_SECS")?;
+        }
+        if let Some(v) = get("GAUSS_REQUIRE_AUTH") {
+            cfg.security.require_auth = parse_bool(&v, "GAUSS_REQUIRE_AUTH")?;
+        }
+        if let Some(v) = get("GAUSS_API_KEYS") {
+            cfg.security.api_keys = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
         if let Some(v) = get("GAUSS_MCP_ENABLED") {
             cfg.mcp.enabled = parse_bool(&v, "GAUSS_MCP_ENABLED")?;

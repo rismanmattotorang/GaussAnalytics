@@ -77,7 +77,7 @@ argon2 = "0.5"
 # Persistence (Phase 2): the application metadata store and SQL data-source
 # drivers. SQLite is the in-process default; Postgres/MySQL connect via the same
 # sqlx pool pattern as they are enabled.
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "migrate", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "postgres", "mysql", "migrate", "macros"] }
 
 [profile.release]
 opt-level = 3

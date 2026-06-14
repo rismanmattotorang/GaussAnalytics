@@ -12,6 +12,7 @@ use chrono::Utc;
 use gauss_auth::{verify_password, PermissionSet, Role, Session};
 use gauss_core::domain::User;
 use gauss_core::error::{CoreError, CoreResult};
+use uuid::Uuid;
 
 /// An authenticated principal plus the permissions resolved for this request.
 pub struct CurrentUser {
@@ -30,9 +31,63 @@ pub fn bearer_token(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Resolve the current user from the request headers, or fail with
-/// [`CoreError::Unauthorized`].
+/// The credential a request presents as an API key: the `X-API-Key` header, or
+/// failing that the `Authorization: Bearer` value.
+pub fn presented_api_key(headers: &HeaderMap) -> Option<String> {
+    if let Some(v) = headers.get("x-api-key").and_then(|h| h.to_str().ok()) {
+        return Some(v.to_string());
+    }
+    bearer_token(headers)
+}
+
+/// Constant-time string comparison (length is not secret here).
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Whether `presented` matches any configured static API key.
+pub fn api_key_valid(state: &AppState, presented: &str) -> bool {
+    state
+        .config
+        .security
+        .api_keys
+        .iter()
+        .any(|k| ct_eq(k, presented))
+}
+
+/// The synthetic administrator principal granted to valid API-key requests.
+fn service_principal() -> CurrentUser {
+    CurrentUser {
+        user: User {
+            id: Uuid::nil(),
+            email: "service@apikey".into(),
+            display_name: "API key (service)".into(),
+            is_admin: true,
+            created_at: Utc::now(),
+        },
+        perms: PermissionSet::admin(),
+        token: String::new(),
+    }
+}
+
+/// Resolve the current principal from the request headers, or fail with
+/// [`CoreError::Unauthorized`]. A valid API key authenticates as a service
+/// administrator; otherwise a session bearer token is required.
 pub async fn authenticate(state: &AppState, headers: &HeaderMap) -> CoreResult<CurrentUser> {
+    if let Some(key) = presented_api_key(headers) {
+        if api_key_valid(state, &key) {
+            return Ok(service_principal());
+        }
+    }
+
     let token = bearer_token(headers)
         .ok_or_else(|| CoreError::Unauthorized("missing bearer token".into()))?;
 

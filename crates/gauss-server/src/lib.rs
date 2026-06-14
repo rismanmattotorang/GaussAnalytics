@@ -13,8 +13,10 @@ pub mod state;
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::HeaderMap;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
@@ -60,12 +62,38 @@ pub fn router(state: AppState) -> Router {
         .route("/nl2sql", post(nl2sql_translate))
         .route("/mcp/servers", get(mcp_list_servers))
         .route("/mcp/invoke", post(mcp_invoke))
+        .layer(middleware::from_fn_with_state(state.clone(), auth_gate))
         .with_state(state);
 
     Router::new()
         .nest("/api", api)
         .fallback_service(ServeDir::new(static_dir))
         .layer(TraceLayer::new_for_http())
+}
+
+/// Paths under `/api` reachable without authentication even when
+/// `require_auth` is enabled. (Paths here are as seen by the nested router, so
+/// without the `/api` prefix.)
+fn is_public_path(path: &str) -> bool {
+    matches!(path, "/health" | "/version" | "/auth/login")
+}
+
+/// Middleware enforcing authentication when `security.require_auth` is set.
+/// A no-op otherwise, so local development and the open demo are unaffected.
+async fn auth_gate(
+    State(st): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    if !st.config.security.require_auth || is_public_path(req.uri().path()) {
+        return Ok(next.run(req).await);
+    }
+    let headers = req.headers().clone();
+    if auth::authenticate(&st, &headers).await.is_ok() {
+        Ok(next.run(req).await)
+    } else {
+        Err(CoreError::Unauthorized("authentication required".into()).into())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -534,6 +562,8 @@ async fn build_store(config: &AppConfig) -> Result<Arc<dyn Store>, BoxError> {
         Ok(Arc::new(gauss_db::SqliteStore::connect(url).await?))
     } else if url.starts_with("postgres") {
         Ok(Arc::new(gauss_db::PgStore::connect(url).await?))
+    } else if url.starts_with("mysql") {
+        Ok(Arc::new(gauss_db::MySqlStore::connect(url).await?))
     } else {
         Ok(Arc::new(InMemoryStore::new()))
     }
@@ -877,5 +907,47 @@ mod tests {
         assert!(dbs.0.iter().any(|d| d.id == db_id && d.is_synced));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn require_auth_gates_routes_and_api_key_passes() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use tower::ServiceExt;
+
+        let store = Arc::new(InMemoryStore::new());
+        seed_demo(store.as_ref()).await.unwrap();
+        let mut cfg = AppConfig::default();
+        cfg.security.require_auth = true;
+        cfg.security.api_keys = vec!["secret-key".into()];
+        let app = router(AppState::new(cfg, store).unwrap());
+
+        // Public path is reachable without credentials.
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/api/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Protected path is blocked for anonymous callers.
+        let resp = app
+            .clone()
+            .oneshot(Request::get("/api/databases").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // A valid API key authenticates as a service principal.
+        let resp = app
+            .oneshot(
+                Request::get("/api/databases")
+                    .header("x-api-key", "secret-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

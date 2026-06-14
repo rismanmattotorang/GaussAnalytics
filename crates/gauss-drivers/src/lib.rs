@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
 
@@ -23,6 +24,7 @@ use gauss_query::CompiledQuery;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
+pub use mysql::MySqlDriver;
 pub use postgres::PgDriver;
 pub use sqlite::SqliteDriver;
 
@@ -67,8 +69,9 @@ pub async fn connect(kind: DataSourceKind, uri: &str) -> CoreResult<Box<dyn Driv
     match kind {
         DataSourceKind::Sqlite => Ok(Box::new(SqliteDriver::connect(uri).await?)),
         DataSourceKind::Postgres => Ok(Box::new(PgDriver::connect(uri).await?)),
-        other => Err(CoreError::Integration(format!(
-            "data-source driver for {other:?} is not yet implemented"
-        ))),
+        DataSourceKind::MySql => Ok(Box::new(MySqlDriver::connect(uri).await?)),
+        DataSourceKind::Generic => Err(CoreError::Integration(
+            "no driver for the Generic data source kind".into(),
+        )),
     }
 }
