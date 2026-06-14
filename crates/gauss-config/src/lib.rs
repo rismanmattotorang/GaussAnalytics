@@ -27,6 +27,12 @@ pub struct ServerConfig {
     pub port: u16,
     /// Filesystem path to the built frontend assets to serve.
     pub static_dir: String,
+    /// Query-result cache TTL in seconds. `0` disables caching.
+    #[serde(default)]
+    pub cache_ttl_secs: u64,
+    /// Background scheduler tick period in seconds (refresh/alerts).
+    #[serde(default)]
+    pub scheduler_period_secs: u64,
 }
 
 /// Application metadata database (the platform's own store).
@@ -51,6 +57,9 @@ pub struct SecurityConfig {
     /// authenticates as a service administrator.
     #[serde(default)]
     pub api_keys: Vec<String>,
+    /// HMAC secret for signed embedding tokens. Empty disables embedding.
+    #[serde(default)]
+    pub embedding_secret: String,
 }
 
 /// Integration settings for Gaussian's MCP Servers.
@@ -82,6 +91,8 @@ impl Default for AppConfig {
                 host: "127.0.0.1".into(),
                 port: 3000,
                 static_dir: "frontend/dist".into(),
+                cache_ttl_secs: 0,
+                scheduler_period_secs: 60,
             },
             database: DatabaseConfig {
                 url: "sqlite://data/gauss.db".into(),
@@ -90,6 +101,7 @@ impl Default for AppConfig {
                 session_ttl_secs: 60 * 60 * 24 * 14, // 14 days
                 require_auth: false,
                 api_keys: Vec::new(),
+                embedding_secret: String::new(),
             },
             mcp: McpConfig {
                 enabled: false,
@@ -146,6 +158,15 @@ impl AppConfig {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+        }
+        if let Some(v) = get("GAUSS_EMBEDDING_SECRET") {
+            cfg.security.embedding_secret = v;
+        }
+        if let Some(v) = get("GAUSS_CACHE_TTL_SECS") {
+            cfg.server.cache_ttl_secs = parse(&v, "GAUSS_CACHE_TTL_SECS")?;
+        }
+        if let Some(v) = get("GAUSS_SCHEDULER_PERIOD_SECS") {
+            cfg.server.scheduler_period_secs = parse(&v, "GAUSS_SCHEDULER_PERIOD_SECS")?;
         }
         if let Some(v) = get("GAUSS_MCP_ENABLED") {
             cfg.mcp.enabled = parse_bool(&v, "GAUSS_MCP_ENABLED")?;

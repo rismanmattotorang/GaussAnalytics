@@ -99,12 +99,22 @@ implemented behind one set of traits; auth enforceable end-to-end.
 
 ---
 
-## Phase 3 — Scheduling, alerts, embedding, caching
+## Phase 3 — Scheduling, alerts, embedding, caching ✅ (complete)
 
-- [ ] Async job scheduler (refresh, sync, alerts).
-- [ ] Pulses/alerts/subscriptions with delivery channels.
-- [ ] Signed-token embedding for embedded analytics.
-- [ ] Query/result caching layer.
+- [x] **Async job scheduler** (`gauss-scheduler`): `Job`/`Notifier` traits + a
+      deterministic, unit-tested `Scheduler`; wired into `serve()` to refresh
+      synced sources on an interval (`GAUSS_SCHEDULER_PERIOD_SECS`).
+- [x] **Query alerts** (`AlertJob`): run a GQL query, notify when results cross
+      a threshold; pluggable `Notifier` (log + collecting). Refresh job re-syncs
+      connected sources.
+- [x] **Signed-token embedding** (`gauss-auth::embed`): HMAC-SHA256 tokens,
+      constant-time verified; endpoints `POST /api/embed/token` (admin) and
+      `GET /api/embed/resolve` (`GAUSS_EMBEDDING_SECRET`).
+- [x] **Query/result caching** (`gauss-server::cache`): compiled-query-keyed TTL
+      cache wired into `/api/dataset/run` (`GAUSS_CACHE_TTL_SECS`).
+
+See [`COMPARISON.md`](./COMPARISON.md) for how these stack up against the
+reference platform.
 
 ---
 

@@ -8,12 +8,14 @@
 #![forbid(unsafe_code)]
 
 pub mod auth;
+pub mod cache;
 pub mod error;
+pub mod jobs;
 pub mod state;
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query as HttpQuery, Request, State};
 use axum::http::HeaderMap;
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -65,6 +67,8 @@ pub fn router(state: AppState) -> Router {
         .route("/databases/{id}/tables", get(list_database_tables))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
+        .route("/embed/token", post(embed_token))
+        .route("/embed/resolve", get(embed_resolve))
         .route("/nl2sql", post(nl2sql_translate))
         .route("/mcp/servers", get(mcp_list_servers))
         .route("/mcp/invoke", post(mcp_invoke))
@@ -421,59 +425,16 @@ async fn sync_database(
         .database_by_id(id)
         .await?
         .ok_or_else(|| CoreError::NotFound(format!("database {id}")))?;
-    let uri = db.connection_uri.clone().ok_or_else(|| {
-        CoreError::InvalidQuery(format!(
-            "data source `{}` has no connection configured",
-            db.name
-        ))
-    })?;
 
-    let driver = gauss_drivers::connect(db.kind, &uri).await?;
-    let discovered = driver.sync_schema().await?;
-
-    let mut summary = Vec::with_capacity(discovered.len());
-    for dt in discovered {
-        // Fingerprint the columns to derive value stats + semantic types.
-        let col_names: Vec<String> = dt.columns.iter().map(|c| c.name.clone()).collect();
-        let prints: std::collections::HashMap<String, gauss_core::domain::Fingerprint> = driver
-            .fingerprint(&dt.name, &col_names)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        let fields: Vec<Field> = dt
-            .columns
-            .iter()
-            .map(|c| {
-                let mut f = Field::new(c.name.clone(), c.field_type);
-                if let Some(fp) = prints.get(&c.name) {
-                    f.semantic_type =
-                        Some(gauss_core::domain::infer_semantic_type(c.field_type, fp));
-                    f.fingerprint = Some(fp.clone());
-                }
-                f
-            })
-            .collect();
-
-        st.store
-            .upsert_table(Table {
-                id: Uuid::new_v4(),
-                database_id: db.id,
-                name: dt.name.clone(),
-                fields,
-            })
-            .await?;
-        summary.push(SyncedTableSummary {
-            name: dt.name,
-            columns: dt.columns.len(),
-        });
-    }
-    st.store.set_database_synced(db.id, true).await?;
+    let tables = jobs::sync_one(&st.store, &db)
+        .await?
+        .into_iter()
+        .map(|(name, columns)| SyncedTableSummary { name, columns })
+        .collect();
 
     Ok(Json(SyncResponse {
         database_id: db.id,
-        tables: summary,
+        tables,
     }))
 }
 
@@ -552,6 +513,13 @@ async fn run_dataset(
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
     let (db, compiled) = prepare_query(&st, &headers, &req).await?;
+
+    // Serve from the result cache when warm.
+    let key = cache::cache_key(db.id, &compiled);
+    if let Some(hit) = st.cache.get(&key) {
+        return Ok(Json(hit));
+    }
+
     let uri = db.connection_uri.ok_or_else(|| {
         CoreError::InvalidQuery(format!(
             "data source `{}` has no connection configured",
@@ -560,7 +528,69 @@ async fn run_dataset(
     })?;
     let driver = gauss_drivers::connect(db.kind, &uri).await?;
     let result = driver.run(&compiled).await?;
+    st.cache.put(key, result.clone());
     Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// Embedding (signed tokens)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct EmbedTokenRequest {
+    /// The resource to embed, e.g. `dashboard:<uuid>` or `card:<uuid>`.
+    resource: String,
+    /// Token lifetime in seconds.
+    ttl_secs: i64,
+}
+
+#[derive(Serialize)]
+struct EmbedTokenResponse {
+    token: String,
+    expires_at: String,
+}
+
+/// Mint a signed embed token for a resource (admin only).
+async fn embed_token(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<EmbedTokenRequest>,
+) -> Result<Json<EmbedTokenResponse>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let exp = Utc::now() + chrono::Duration::seconds(req.ttl_secs);
+    let token = gauss_auth::sign_embed(
+        &st.config.security.embedding_secret,
+        &req.resource,
+        exp.timestamp(),
+    )?;
+    Ok(Json(EmbedTokenResponse {
+        token,
+        expires_at: exp.to_rfc3339(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct EmbedResolveQuery {
+    token: String,
+}
+
+#[derive(Serialize)]
+struct EmbedResolveResponse {
+    resource: String,
+}
+
+/// Verify an embed token and return its resource (public — the token is the
+/// credential).
+async fn embed_resolve(
+    State(st): State<AppState>,
+    HttpQuery(q): HttpQuery<EmbedResolveQuery>,
+) -> Result<Json<EmbedResolveResponse>, ApiError> {
+    let resource = gauss_auth::verify_embed(
+        &st.config.security.embedding_secret,
+        &q.token,
+        Utc::now().timestamp(),
+    )?;
+    Ok(Json(EmbedResolveResponse { resource }))
 }
 
 // ---------------------------------------------------------------------------
@@ -765,12 +795,41 @@ pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
         tracing::info!("ensured administrator account for {email}");
     }
 
+    // Background scheduler: periodically refresh connected sources' schemas.
+    let period_secs = config.server.scheduler_period_secs;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let scheduler_handle = if period_secs > 0 {
+        let mut scheduler = gauss_scheduler::Scheduler::new();
+        scheduler.every(
+            "refresh-schemas",
+            chrono::Duration::seconds(period_secs as i64),
+            Utc::now(),
+            Arc::new(jobs::RefreshJob {
+                store: store.clone(),
+            }),
+        );
+        let period = std::time::Duration::from_secs(period_secs);
+        Some(tokio::spawn(scheduler.run(period, shutdown_rx)))
+    } else {
+        None
+    };
+
     let state = AppState::new(config, store)?;
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("{PRODUCT_NAME} listening on http://{addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+
+    // Stop the scheduler on shutdown.
+    let _ = shutdown_tx.send(true);
+    if let Some(handle) = scheduler_handle {
+        let _ = handle.await;
+    }
     Ok(())
 }
 
@@ -1109,6 +1168,42 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn embed_token_signs_and_resolves() {
+        let store = Arc::new(InMemoryStore::new());
+        seed_demo(store.as_ref()).await.unwrap();
+        ensure_admin(store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let mut cfg = AppConfig::default();
+        cfg.security.embedding_secret = "embed-secret".into();
+        let st = AppState::new(cfg, store).unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        let token = embed_token(
+            State(st.clone()),
+            bearer(&login.token),
+            Json(EmbedTokenRequest {
+                resource: "dashboard:1".into(),
+                ttl_secs: 60,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let resolved = embed_resolve(
+            State(st),
+            HttpQuery(EmbedResolveQuery {
+                token: token.0.token,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.0.resource, "dashboard:1");
     }
 
     #[tokio::test]
