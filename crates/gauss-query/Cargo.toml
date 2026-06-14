@@ -10,3 +10,6 @@ description = "GaussAnalytics GQL-to-parameterized-SQL compiler with per-dialect
 [dependencies]
 gauss-core.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+gauss-core.workspace = true

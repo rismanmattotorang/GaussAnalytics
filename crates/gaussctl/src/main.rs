@@ -52,9 +52,14 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             gauss_tui::run()?;
         }
         Command::Migrate => {
+            let config = AppConfig::from_env()?;
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(gauss_db::migrate_url(&config.database.url))?;
             println!(
-                "GaussAnalytics migrations: the sqlx-backed application database \
-                 and its migrations land in Phase 2 (see docs/ROADMAP.md)."
+                "GaussAnalytics: migrations applied to {}",
+                config.database.url
             );
         }
         Command::Version => {

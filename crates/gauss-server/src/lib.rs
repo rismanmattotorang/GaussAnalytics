@@ -9,20 +9,23 @@
 
 #![forbid(unsafe_code)]
 
+pub mod auth;
 pub mod error;
 pub mod state;
 
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use gauss_auth::Permission;
 use gauss_config::AppConfig;
-use gauss_core::domain::{DataSourceKind, Database, Field, FieldType, Table};
+use gauss_core::domain::{DataSourceKind, Database, Field, FieldType, Table, User};
 use gauss_core::error::CoreError;
 use gauss_core::gql::Query;
-use gauss_db::{DatabaseRepository, InMemoryStore};
+use gauss_db::{DatabaseRepository, InMemoryStore, Store};
 use gauss_mcp_gateway::{McpServer, ToolInvocation, ToolResult};
 use gauss_nl2sql::{GuardedQuery, Nl2SqlRequest, SchemaContext, TableContext};
 use gauss_query::CompiledQuery;
@@ -47,6 +50,9 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .route("/version", get(version))
+        .route("/auth/login", post(auth_login))
+        .route("/auth/logout", post(auth_logout))
+        .route("/auth/me", get(auth_me))
         .route("/databases", get(list_databases))
         .route("/dataset/compile", post(compile_dataset))
         .route("/nl2sql", post(nl2sql_translate))
@@ -88,6 +94,63 @@ async fn version() -> Json<serde_json::Value> {
 }
 
 // ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    email: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct LoginResponse {
+    token: String,
+    expires_at: String,
+}
+
+async fn auth_login(
+    State(st): State<AppState>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, ApiError> {
+    let session = auth::login(&st, &req.email, &req.password).await?;
+    Ok(Json(LoginResponse {
+        token: session.token,
+        expires_at: session.expires_at.to_rfc3339(),
+    }))
+}
+
+async fn auth_logout(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let current = auth::authenticate(&st, &headers).await?;
+    st.store.delete_session(&current.token).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Serialize)]
+struct MeResponse {
+    id: Uuid,
+    email: String,
+    display_name: String,
+    is_admin: bool,
+}
+
+async fn auth_me(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MeResponse>, ApiError> {
+    let current = auth::authenticate(&st, &headers).await?;
+    Ok(Json(MeResponse {
+        id: current.user.id,
+        email: current.user.email,
+        display_name: current.user.display_name,
+        is_admin: current.user.is_admin,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Databases
 // ---------------------------------------------------------------------------
 
@@ -107,8 +170,19 @@ struct CompileRequest {
 
 async fn compile_dataset(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<CompiledQuery>, ApiError> {
+    // If the caller presents a session, enforce read permission on the target
+    // database. Anonymous calls remain open in this scaffold; Phase 2 makes
+    // authentication mandatory once per-database grants are persisted.
+    if auth::bearer_token(&headers).is_some() {
+        let current = auth::authenticate(&st, &headers).await?;
+        current.perms.require(Permission::ReadDatabase {
+            database_id: req.database_id,
+        })?;
+    }
+
     let db = st
         .store
         .database_by_id(req.database_id)
@@ -254,6 +328,29 @@ pub async fn seed_demo(store: &InMemoryStore) -> gauss_core::CoreResult<Uuid> {
     Ok(db_id)
 }
 
+/// Ensure an administrator account exists, creating one if absent.
+///
+/// Used at startup to bootstrap the first admin from configuration so the
+/// instance is immediately usable. Idempotent: a no-op if the user exists.
+pub async fn ensure_admin(
+    store: &dyn Store,
+    email: &str,
+    password: &str,
+) -> gauss_core::CoreResult<()> {
+    if store.user_by_email(email).await?.is_some() {
+        return Ok(());
+    }
+    let hash = gauss_auth::hash_password(password)?;
+    let user = User {
+        id: Uuid::new_v4(),
+        email: email.to_string(),
+        display_name: "Administrator".to_string(),
+        is_admin: true,
+        created_at: Utc::now(),
+    };
+    store.create_user(user, hash).await
+}
+
 /// Boxed error used by the server bootstrap (keeps `anyhow` out of the deps).
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -262,6 +359,16 @@ pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
     let addr = config.bind_addr();
     let store = Arc::new(InMemoryStore::new());
     seed_demo(&store).await?;
+
+    // Bootstrap an administrator from the environment when provided.
+    if let (Ok(email), Ok(password)) = (
+        std::env::var("GAUSS_ADMIN_EMAIL"),
+        std::env::var("GAUSS_ADMIN_PASSWORD"),
+    ) {
+        ensure_admin(store.as_ref(), &email, &password).await?;
+        tracing::info!("ensured administrator account for {email}");
+    }
+
     let state = AppState::new(config, store)?;
     let app = router(state);
 
@@ -295,6 +402,7 @@ mod tests {
         }];
         let resp = compile_dataset(
             State(st),
+            HeaderMap::new(),
             Json(CompileRequest {
                 database_id: db_id,
                 query: q,
@@ -314,6 +422,7 @@ mod tests {
         q.fields = vec!["nonexistent".into()];
         let err = compile_dataset(
             State(st),
+            HeaderMap::new(),
             Json(CompileRequest {
                 database_id: db_id,
                 query: q,
@@ -328,5 +437,88 @@ mod tests {
         let h = health().await;
         assert_eq!(h.0.name, "GaussAnalytics");
         assert_eq!(h.0.status, "ok");
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        h
+    }
+
+    #[tokio::test]
+    async fn login_then_me_round_trip() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        let login = auth_login(
+            State(st.clone()),
+            Json(LoginRequest {
+                email: "admin@example.com".into(),
+                password: "supersecret1".into(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let me = auth_me(State(st), bearer(&login.0.token)).await.unwrap();
+        assert_eq!(me.0.email, "admin@example.com");
+        assert!(me.0.is_admin);
+    }
+
+    #[tokio::test]
+    async fn login_rejects_bad_password() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let res = auth_login(
+            State(st),
+            Json(LoginRequest {
+                email: "admin@example.com".into(),
+                password: "wrong-password".into(),
+            }),
+        )
+        .await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn non_admin_is_denied_database_read() {
+        let (st, db_id) = test_state().await;
+        // Create a non-admin user and log in.
+        let hash = gauss_auth::hash_password("viewerpass12").unwrap();
+        st.store
+            .create_user(
+                User {
+                    id: Uuid::new_v4(),
+                    email: "viewer@example.com".into(),
+                    display_name: "Viewer".into(),
+                    is_admin: false,
+                    created_at: Utc::now(),
+                },
+                hash,
+            )
+            .await
+            .unwrap();
+        let login = auth::login(&st, "viewer@example.com", "viewerpass12")
+            .await
+            .unwrap();
+
+        // An authenticated viewer has no ReadDatabase grant -> denied.
+        let res = compile_dataset(
+            State(st),
+            bearer(&login.token),
+            Json(CompileRequest {
+                database_id: db_id,
+                query: Query::new("orders"),
+            }),
+        )
+        .await;
+        assert!(res.is_err());
     }
 }

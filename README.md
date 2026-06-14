@@ -131,7 +131,8 @@ crates/
   gauss-query         GQL → parameterized SQL compiler
   gauss-config        layered configuration
   gauss-auth          Argon2 hashing · sessions · RBAC
-  gauss-db            metadata store (repository traits + in-memory impl)
+  gauss-db            metadata store (repository traits · in-memory · sqlx/SQLite)
+  gauss-drivers       data-source drivers: execute queries · discover schema
   gauss-mcp-gateway   integration layer → Gaussian MCP Servers
   gauss-nl2sql        integration layer → Gaussian NL2SQL
   gauss-server        axum HTTP/JSON API + static web UI hosting
@@ -143,11 +144,13 @@ docs/                 strategy, architecture, roadmap, ADRs
 
 ## Status
 
-GaussAnalytics is in active development. **Phases 0 and 1** (foundation + core
-engine skeleton) are complete and verifiable: `cargo test --workspace` is green,
-the server answers, the TUI runs, and the GQL compiler is covered by tests. See
-the [Roadmap](docs/ROADMAP.md) for what's next (persistence, drivers, scheduling,
-embedding, and deeper AI).
+GaussAnalytics is in active development. **Phases 0 and 1** are complete and
+**Phase 2 is in progress**: persistent storage (`sqlx`/SQLite + migrations),
+a working data-source driver (execute queries + discover schema), and
+authentication (login/logout/sessions + permission gating) are all implemented
+and tested. `cargo test --workspace` is green, `gaussctl serve`/`migrate`/`admin`
+all work. See the [Roadmap](docs/ROADMAP.md) for what's next (Postgres/MySQL
+drivers, scheduling, embedding, and deeper AI).
 
 ## Development
 

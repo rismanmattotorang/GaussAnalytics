@@ -1,18 +1,16 @@
 [package]
-name = "gauss-db"
+name = "gauss-drivers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "GaussAnalytics application metadata store: repository traits + in-memory impl."
+description = "GaussAnalytics data-source drivers: execute compiled queries and discover schema."
 
 [dependencies]
 gauss-core.workspace = true
-gauss-auth.workspace = true
+gauss-query.workspace = true
 async-trait.workspace = true
-uuid.workspace = true
-chrono.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 

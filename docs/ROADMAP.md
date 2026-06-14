@@ -44,15 +44,29 @@ and a runnable artifact. Phases 0 and 1 are delivered in this changeset.
 
 ---
 
-## Phase 2 — Persistence, drivers, real auth
+## Phase 2 — Persistence, drivers, real auth (in progress)
 
-- [ ] `gauss-db` on `sqlx` (Postgres + SQLite) with SQL migrations + `migrate`.
-- [ ] Data-source drivers: Postgres, MySQL, SQLite execution paths.
-- [ ] Schema sync, fingerprinting, and field classification.
-- [ ] Session middleware, API keys, real permission enforcement on every route.
-- [ ] Golden-file query tests across dialects; differential testing harness.
-- [ ] Wire the reused frontend's API client against the Rust server (contract
-      compatibility suite).
+Scaffolded in this changeset (compiling + tested):
+
+- [x] `gauss-db` on `sqlx` (SQLite) with SQL migrations + `gaussctl migrate`;
+      `SqliteStore` implements the same repository traits as the in-memory store.
+- [x] `gauss-drivers`: a `Driver` trait + working SQLite driver that executes a
+      `CompiledQuery` and returns rows.
+- [x] Schema sync + field classification (SQLite type-affinity) via the driver.
+- [x] Login / logout / session resolution + a permission gate on dataset
+      compilation (authenticated callers are permission-checked).
+- [x] Golden-file query tests across Postgres / MySQL / SQLite / Generic.
+
+Remaining for Phase 2:
+
+- [ ] Postgres + MySQL store and driver implementations (same `sqlx` pattern).
+- [ ] Fingerprinting (value stats) and richer semantic typing during sync.
+- [ ] API keys; make authentication mandatory once per-database/-collection
+      grants are persisted; session middleware as a tower layer.
+- [ ] Differential testing harness (compare results across engines).
+- [ ] Contract-compatibility suite exercising the reused frontend client.
+- [ ] Switch the default `serve()` store to `SqliteStore` once admin bootstrap
+      and connection management are finalized.
 
 ---
 
