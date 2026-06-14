@@ -165,6 +165,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ database_id, query }),
     }),
+  native: (database_id: string, sql: string) =>
+    request<QueryResult>("/dataset/native", {
+      method: "POST",
+      body: JSON.stringify({ database_id, sql }),
+    }),
   nl2sql: (database_id: string, prompt: string) =>
     request<GuardedQuery>("/nl2sql", {
       method: "POST",

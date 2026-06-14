@@ -68,6 +68,7 @@ pub fn router(state: AppState) -> Router {
         .route("/databases/{id}/tables", get(list_database_tables))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
+        .route("/dataset/native", post(native_dataset))
         .route(
             "/collections",
             get(content::list_collections).post(content::create_collection),
@@ -564,6 +565,57 @@ async fn run_dataset(
     Json(req): Json<CompileRequest>,
 ) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
     Ok(Json(execute_query(&st, &headers, &req).await?))
+}
+
+#[derive(Deserialize)]
+struct NativeRequest {
+    database_id: Uuid,
+    sql: String,
+}
+
+/// Execute a hand-written SQL query — **read-only-guarded**: the statement must
+/// be a single SELECT/WITH (no DDL/DML), enforced before it ever reaches the
+/// driver. Authenticated callers are permission-checked; results are cached.
+/// This is GaussAnalytics' safer take on Metabase's native-query editor.
+async fn native_dataset(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<NativeRequest>,
+) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
+    if auth::bearer_token(&headers).is_some() {
+        let current = auth::authenticate(&st, &headers).await?;
+        current.perms.require(Permission::ReadDatabase {
+            database_id: req.database_id,
+        })?;
+    }
+
+    let db = st
+        .store
+        .database_by_id(req.database_id)
+        .await?
+        .ok_or_else(|| CoreError::NotFound(format!("database {}", req.database_id)))?;
+    let uri = db.connection_uri.clone().ok_or_else(|| {
+        CoreError::InvalidQuery(format!(
+            "data source `{}` has no connection configured",
+            db.name
+        ))
+    })?;
+
+    // Read-only guardrail: reject DDL/DML and statement batching.
+    let sql = gauss_nl2sql::ensure_read_only(&req.sql)?;
+    let compiled = gauss_query::CompiledQuery {
+        sql,
+        params: Vec::new(),
+    };
+
+    let key = cache::cache_key(db.id, &compiled);
+    if let Some(hit) = st.cache.get(&key) {
+        return Ok(Json(hit));
+    }
+    let driver = gauss_drivers::connect(db.kind, &uri).await?;
+    let result = driver.run(&compiled).await?;
+    st.cache.put(key, result.clone());
+    Ok(Json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -1519,6 +1571,61 @@ mod tests {
         .await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(v["cards"].as_array().unwrap().len(), 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn native_sql_runs_reads_and_rejects_writes() {
+        let path = std::env::temp_dir().join(format!("gauss_native_{}.db", Uuid::new_v4()));
+        let uri = format!("sqlite://{}", path.display());
+        let setup = gauss_drivers::SqliteDriver::connect(&uri).await.unwrap();
+        sqlx::query("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT)")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO orders (status) VALUES ('paid'),('paid'),('refunded')")
+            .execute(setup.pool())
+            .await
+            .unwrap();
+
+        let store = Arc::new(InMemoryStore::new());
+        let db = Database {
+            id: Uuid::new_v4(),
+            name: "sales".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: true,
+            connection_uri: Some(uri),
+            created_at: Utc::now(),
+        };
+        let db_id = db.id;
+        store.create_database(db).await.unwrap();
+        let st = AppState::new(AppConfig::default(), store).unwrap();
+
+        // A read query runs.
+        let ok = native_dataset(
+            State(st.clone()),
+            HeaderMap::new(),
+            Json(NativeRequest {
+                database_id: db_id,
+                sql: "SELECT status, COUNT(*) FROM orders GROUP BY status ORDER BY status".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok.0.rows.len(), 2);
+
+        // A mutation is rejected by the read-only guardrail.
+        let bad = native_dataset(
+            State(st),
+            HeaderMap::new(),
+            Json(NativeRequest {
+                database_id: db_id,
+                sql: "DELETE FROM orders".into(),
+            }),
+        )
+        .await;
+        assert!(bad.is_err());
 
         let _ = std::fs::remove_file(&path);
     }

@@ -3,9 +3,18 @@ import { api, type Database, type Health } from "./api/client";
 import { QueryBuilder } from "./components/QueryBuilder";
 import { SavedQuestions } from "./components/SavedQuestions";
 import { Dashboards } from "./components/Dashboards";
+import { NativeSql } from "./components/NativeSql";
 import { NlAsk } from "./components/NlAsk";
 
-type View = "explore" | "saved" | "dashboards" | "ask";
+type View = "explore" | "sql" | "saved" | "dashboards" | "ask";
+
+const VIEW_LABELS: Record<View, string> = {
+  explore: "Explore",
+  sql: "SQL",
+  saved: "Saved questions",
+  dashboards: "Dashboards",
+  ask: "Ask (NL2SQL)",
+};
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -71,15 +80,9 @@ export default function App() {
       </header>
 
       <nav className="app__nav">
-        {(["explore", "saved", "dashboards", "ask"] as View[]).map((v) => (
+        {(["explore", "sql", "saved", "dashboards", "ask"] as View[]).map((v) => (
           <button key={v} className="tab" data-active={v === view} onClick={() => setView(v)}>
-            {v === "explore"
-              ? "Explore"
-              : v === "saved"
-                ? "Saved questions"
-                : v === "dashboards"
-                  ? "Dashboards"
-                  : "Ask (NL2SQL)"}
+            {VIEW_LABELS[v]}
           </button>
         ))}
       </nav>
@@ -91,6 +94,8 @@ export default function App() {
           <p className="muted">No data sources, or the API is unreachable.</p>
         ) : view === "explore" ? (
           <QueryBuilder databases={databases} token={token} />
+        ) : view === "sql" ? (
+          <NativeSql databases={databases} />
         ) : view === "saved" ? (
           <SavedQuestions />
         ) : view === "dashboards" ? (
