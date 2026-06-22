@@ -3,8 +3,10 @@ import {
   api,
   type CellKind,
   type CellOutput,
+  type Database,
   type Notebook,
   type NotebookCell,
+  type QueryResult,
 } from "../api/client";
 
 /** Minimal, escaped Markdown → HTML (headings, bold, inline code, line breaks).
@@ -25,6 +27,60 @@ function newCell(kind: CellKind): NotebookCell {
   return { id: crypto.randomUUID(), kind, source: "" };
 }
 
+const KIND_LABEL: Record<CellKind, string> = {
+  markdown: "Markdown",
+  python: "Python",
+  sql: "SQL",
+  nl2sql: "NL2SQL",
+  input: "Input",
+};
+
+function cellPlaceholder(kind: CellKind): string {
+  switch (kind) {
+    case "python":
+      return "Python…";
+    case "markdown":
+      return "Markdown…";
+    case "sql":
+      return "SELECT … (read-only)";
+    case "nl2sql":
+      return "Ask in plain English…";
+    case "input":
+      return "value";
+  }
+}
+
+/** A compact preview table for a SQL/NL2SQL cell result (first rows). */
+function PreviewTable({ result }: { result: QueryResult }) {
+  const rows = result.rows.slice(0, 50);
+  return (
+    <div className="nb-preview">
+      <table className="data-table">
+        <thead>
+          <tr>
+            {result.columns.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              {row.map((cell, j) => (
+                <td key={j}>{cell === null ? "∅" : String(cell)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <span className="muted">
+        {result.rows.length} row{result.rows.length === 1 ? "" : "s"}
+        {result.rows.length > rows.length ? ` (showing ${rows.length})` : ""}
+      </span>
+    </div>
+  );
+}
+
 /** Render one normalized kernel output (stream text, MIME bundle, or error). */
 function OutputView({ out }: { out: CellOutput }) {
   if (out.kind === "stream") {
@@ -34,7 +90,6 @@ function OutputView({ out }: { out: CellOutput }) {
     const text = out.traceback.length ? out.traceback.join("\n") : `${out.ename}: ${out.evalue}`;
     return <pre className="nb-output nb-output--error">{text}</pre>;
   }
-  // data: prefer an image, then HTML, then plain text.
   const data = out.data;
   const png = data["image/png"];
   if (typeof png === "string") {
@@ -48,13 +103,26 @@ function OutputView({ out }: { out: CellOutput }) {
   return <pre className="nb-output">{typeof plain === "string" ? plain : JSON.stringify(data)}</pre>;
 }
 
-export function Notebooks({ token }: { token: string | null }) {
+interface CellMeta {
+  sql?: string;
+  preview?: QueryResult;
+}
+
+export function Notebooks({
+  token,
+  databases,
+}: {
+  token: string | null;
+  databases: Database[];
+}) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [open, setOpen] = useState<Notebook | null>(null);
   const [name, setName] = useState("");
   const [cells, setCells] = useState<NotebookCell[]>([]);
   const [outputs, setOutputs] = useState<Record<string, CellOutput[]>>({});
+  const [meta, setMeta] = useState<Record<string, CellMeta>>({});
   const [running, setRunning] = useState<string | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
   const [kernelRunning, setKernelRunning] = useState(false);
   const [saved, setSaved] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -77,6 +145,7 @@ export function Notebooks({ token }: { token: string | null }) {
     setName(nb.name);
     setCells(nb.cells);
     setOutputs({});
+    setMeta({});
     setKernelRunning(false);
     setError(null);
   }
@@ -119,8 +188,8 @@ export function Notebooks({ token }: { token: string | null }) {
     }
   }
 
-  function updateCell(id: string, source: string) {
-    setCells((cs) => cs.map((c) => (c.id === id ? { ...c, source } : c)));
+  function patchCell(id: string, patch: Partial<NotebookCell>) {
+    setCells((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   }
 
   function addCell(kind: CellKind) {
@@ -141,18 +210,38 @@ export function Notebooks({ token }: { token: string | null }) {
     });
   }
 
-  async function runCell(cell: NotebookCell) {
-    if (!token || !open) return;
-    setError(null);
+  // Run a single cell. Returns false if it errored (so a "run all" sweep can
+  // stop). Markdown cells are not executed.
+  async function runCell(cell: NotebookCell): Promise<boolean> {
+    if (!token || !open || cell.kind === "markdown") return true;
     setRunning(cell.id);
     try {
-      const res = await api.runCell(open.id, cell.source, token);
+      const res = await api.runCell(open.id, cell, token);
       setOutputs((o) => ({ ...o, [cell.id]: res.outputs }));
+      setMeta((m) => ({ ...m, [cell.id]: { sql: res.sql, preview: res.preview } }));
       setKernelRunning(true);
+      return !res.outputs.some((o) => o.kind === "error");
     } catch (e) {
       fail(e);
+      return false;
     } finally {
       setRunning(null);
+    }
+  }
+
+  // Reactive re-run: execute every cell top-to-bottom. Inputs are re-injected
+  // and downstream SQL/Python recompute with the new values. Stops on error.
+  async function runAll() {
+    if (!token || !open) return;
+    setError(null);
+    setRunningAll(true);
+    try {
+      for (const cell of cells) {
+        const ok = await runCell(cell);
+        if (!ok) break;
+      }
+    } finally {
+      setRunningAll(false);
     }
   }
 
@@ -199,6 +288,9 @@ export function Notebooks({ token }: { token: string | null }) {
             aria-label="notebook name"
           />
           <span className="notebooks__actions">
+            <button onClick={runAll} disabled={runningAll}>
+              {runningAll ? "Running…" : "Run all"}
+            </button>
             <button onClick={save}>Save</button>
             {saved && <span className="ds-ok">Saved</span>}
             {kernelRunning ? (
@@ -215,61 +307,135 @@ export function Notebooks({ token }: { token: string | null }) {
 
         {error && <p className="app__error">{error}</p>}
 
-        {cells.length === 0 && (
-          <p className="muted">Empty notebook — add a cell below.</p>
-        )}
+        {cells.length === 0 && <p className="muted">Empty notebook — add a cell below.</p>}
 
-        {cells.map((cell, i) => (
-          <div key={cell.id} className="nb-cell" data-kind={cell.kind}>
-            <div className="nb-cell__head">
-              <span className="nb-cell__kind">{cell.kind}</span>
-              <span className="nb-cell__tools">
-                <button className="link" onClick={() => moveCell(i, -1)} disabled={i === 0}>
-                  ↑
-                </button>
-                <button
-                  className="link"
-                  onClick={() => moveCell(i, 1)}
-                  disabled={i === cells.length - 1}
-                >
-                  ↓
-                </button>
-                {cell.kind === "python" && (
-                  <button onClick={() => runCell(cell)} disabled={running === cell.id}>
-                    {running === cell.id ? "Running…" : "Run"}
+        {cells.map((cell, i) => {
+          const isData = cell.kind === "sql" || cell.kind === "nl2sql";
+          const cellMeta = meta[cell.id];
+          const cellOutputs = outputs[cell.id] ?? [];
+          // For data cells the structured preview replaces the echoed repr;
+          // still surface any errors from injection.
+          const shownOutputs = cellMeta?.preview
+            ? cellOutputs.filter((o) => o.kind === "error")
+            : cellOutputs;
+          return (
+            <div key={cell.id} className="nb-cell" data-kind={cell.kind}>
+              <div className="nb-cell__head">
+                <span className="nb-cell__kind">{KIND_LABEL[cell.kind]}</span>
+                <span className="nb-cell__tools">
+                  <button className="link" onClick={() => moveCell(i, -1)} disabled={i === 0}>
+                    ↑
                   </button>
-                )}
-                <button className="link" onClick={() => removeCell(cell.id)}>
-                  Delete
-                </button>
-              </span>
+                  <button
+                    className="link"
+                    onClick={() => moveCell(i, 1)}
+                    disabled={i === cells.length - 1}
+                  >
+                    ↓
+                  </button>
+                  {cell.kind !== "markdown" && (
+                    <button onClick={() => runCell(cell)} disabled={running === cell.id}>
+                      {running === cell.id ? "Running…" : "Run"}
+                    </button>
+                  )}
+                  <button className="link" onClick={() => removeCell(cell.id)}>
+                    Delete
+                  </button>
+                </span>
+              </div>
+
+              {/* Data cells: source-and-variable controls. */}
+              {isData && (
+                <div className="nb-cell__data-controls">
+                  <select
+                    aria-label="data source"
+                    value={cell.database_id ?? ""}
+                    onChange={(e) => patchCell(cell.id, { database_id: e.target.value || null })}
+                  >
+                    <option value="">data source…</option>
+                    {databases.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="muted">→</span>
+                  <input
+                    className="nb-cell__var"
+                    placeholder="df"
+                    aria-label="output variable"
+                    value={cell.output_var ?? ""}
+                    onChange={(e) => patchCell(cell.id, { output_var: e.target.value || null })}
+                  />
+                </div>
+              )}
+
+              {/* Input cells: variable name + value. */}
+              {cell.kind === "input" ? (
+                <div className="nb-cell__input">
+                  <input
+                    className="nb-cell__var"
+                    placeholder="variable"
+                    aria-label="input variable"
+                    value={cell.input_var ?? ""}
+                    onChange={(e) => patchCell(cell.id, { input_var: e.target.value || null })}
+                  />
+                  <span className="muted">=</span>
+                  <input
+                    className="nb-cell__val"
+                    placeholder={cellPlaceholder(cell.kind)}
+                    aria-label="input value"
+                    value={cell.source}
+                    onChange={(e) => patchCell(cell.id, { source: e.target.value })}
+                  />
+                </div>
+              ) : (
+                <textarea
+                  className="nb-cell__src native__editor"
+                  value={cell.source}
+                  spellCheck={false}
+                  rows={Math.max(2, cell.source.split("\n").length)}
+                  onChange={(e) => patchCell(cell.id, { source: e.target.value })}
+                  placeholder={cellPlaceholder(cell.kind)}
+                />
+              )}
+
+              {cell.kind === "markdown" && cell.source && (
+                <div
+                  className="nb-cell__md"
+                  dangerouslySetInnerHTML={{ __html: mdToHtml(cell.source) }}
+                />
+              )}
+
+              {/* NL2SQL shows the SQL it generated. */}
+              {cell.kind === "nl2sql" && cellMeta?.sql && (
+                <pre className="nb-cell__sql">{cellMeta.sql}</pre>
+              )}
+
+              {cellMeta?.preview && <PreviewTable result={cellMeta.preview} />}
+
+              {shownOutputs.map((out, k) => (
+                <OutputView key={k} out={out} />
+              ))}
             </div>
-            <textarea
-              className="nb-cell__src native__editor"
-              value={cell.source}
-              spellCheck={false}
-              rows={Math.max(2, cell.source.split("\n").length)}
-              onChange={(e) => updateCell(cell.id, e.target.value)}
-              placeholder={cell.kind === "python" ? "Python…" : "Markdown…"}
-            />
-            {cell.kind === "markdown" && cell.source && (
-              <div
-                className="nb-cell__md"
-                dangerouslySetInnerHTML={{ __html: mdToHtml(cell.source) }}
-              />
-            )}
-            {(outputs[cell.id] ?? []).map((out, k) => (
-              <OutputView key={k} out={out} />
-            ))}
-          </div>
-        ))}
+          );
+        })}
 
         <div className="notebooks__add">
           <button className="link" onClick={() => addCell("python")}>
-            + Python cell
+            + Python
+          </button>
+          <button className="link" onClick={() => addCell("sql")}>
+            + SQL
+          </button>
+          <button className="link" onClick={() => addCell("nl2sql")}>
+            + NL2SQL
+          </button>
+          <button className="link" onClick={() => addCell("input")}>
+            + Input
           </button>
           <button className="link" onClick={() => addCell("markdown")}>
-            + Markdown cell
+            + Markdown
           </button>
         </div>
       </div>
@@ -280,7 +446,8 @@ export function Notebooks({ token }: { token: string | null }) {
     <div className="notebooks">
       <h2>Notebooks</h2>
       <p className="muted">
-        Mix Markdown notes with Python that runs on your local Jupyter kernel.
+        Mix Markdown notes, SQL/NL2SQL queries (results land as a pandas
+        DataFrame), inputs, and Python that runs on your local Jupyter kernel.
         Code execution requires <code>GAUSS_JUPYTER_ENABLED</code> and a running
         Jupyter Server.
       </p>

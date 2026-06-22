@@ -34,12 +34,12 @@ afterEach(cleanup);
 
 describe("Notebooks", () => {
   it("prompts to sign in without a token", async () => {
-    render(<Notebooks token={null} />);
+    render(<Notebooks token={null} databases={[]} />);
     expect(screen.getByText(/sign in to create and run notebooks/i)).toBeTruthy();
   });
 
   it("lists notebooks and opens one into a cell editor", async () => {
-    render(<Notebooks token="admin" />);
+    render(<Notebooks token="admin" databases={[]} />);
     // The list shows the notebook and its cell count.
     await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
     expect(screen.getByText("2 cells")).toBeTruthy();
@@ -56,12 +56,46 @@ describe("Notebooks", () => {
       kernel_id: "k1",
       outputs: [{ kind: "stream", name: "stdout", text: "hello\n" }],
     });
-    render(<Notebooks token="admin" />);
+    render(<Notebooks token="admin" databases={[]} />);
     await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
     fireEvent.click(screen.getByText("Analysis"));
 
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByText("hello")).toBeTruthy());
-    expect(api.runCell).toHaveBeenCalledWith("nb-1", "1 + 1", "admin");
+    // The whole cell object is sent (kind + source), not just code.
+    expect(api.runCell).toHaveBeenCalledWith(
+      "nb-1",
+      expect.objectContaining({ kind: "python", source: "1 + 1" }),
+      "admin",
+    );
+  });
+
+  it("adds a SQL cell and renders its preview table", async () => {
+    (api.notebooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...sample, cells: [{ id: "s1", kind: "sql", source: "select 1 as n", database_id: "db1" }] },
+    ]);
+    (api.runCell as ReturnType<typeof vi.fn>).mockResolvedValue({
+      kernel_id: "k1",
+      outputs: [{ kind: "data", data: { "text/plain": "   n\n0  1" } }],
+      sql: "select 1 as n",
+      preview: { columns: ["n"], rows: [[1]] },
+    });
+    render(
+      <Notebooks
+        token="admin"
+        databases={[
+          { id: "db1", name: "Warehouse", kind: "postgres", is_synced: true, created_at: "x" },
+        ]}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+
+    // The SQL cell exposes a data-source selector and runs into a preview.
+    expect(screen.getByRole("combobox", { name: "data source" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("1 row")).toBeTruthy());
+    // The preview header column is rendered.
+    expect(screen.getByRole("columnheader", { name: "n" })).toBeTruthy();
   });
 });

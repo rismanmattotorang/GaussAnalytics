@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** N0–N1 delivered · N2–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** N0–N2 delivered · N3–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -131,8 +131,18 @@ permissions/`CreateContent`, and appear in export/import.
   stays behind `GAUSS_JUPYTER_ENABLED`: CRUD always works; run/kernel endpoints report
   the integration as disabled until an operator opts in. Reactive re-runs and streaming
   to the browser land in N2/N3.
-- **N2 — Data:** **SQL** + **NL2SQL** blocks (→ DataFrame injection, RLS-aware) and
-  **Input** widgets feeding reactive re-runs.
+- **N2 — Data ✅ delivered:** **SQL** and **NL2SQL** cells run through the governed
+  query path (`ReadDatabase` permission + read-only guardrail + pooled connection +
+  result cache) — NL2SQL is translated to guardrailed SQL grounded on the synced
+  schema — and the result is **injected into the kernel as a pandas `DataFrame`**
+  (named by `output_var`, default `df`), with an inline preview table. **Input** cells
+  bind a typed variable (int/float/bool/str) into the kernel. A **Run all** sweep
+  re-executes cells top-to-bottom, so changing an input and re-running recomputes
+  downstream SQL/Python — reactive re-runs without (yet) a dependency DAG. Injection
+  code is generated safely (validated identifiers; data shipped as in-kernel-parsed
+  JSON). Note: policy-level **RLS** applies on the structured (GQL) path; raw-SQL and
+  NL2SQL cells are permission-checked and read-only-guarded. The explicit dependency
+  **DAG** (variable def/use analysis, cycle rejection) lands in N3.
 - **N3 — Visuals & reactivity:** **Chart** + **Big Number** blocks (nivo from a
   DataFrame) and matplotlib/plotly passthrough; the dependency DAG.
 - **N4 — Dashboards & schedule:** publish block outputs as dashboard cards; scheduled

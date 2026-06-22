@@ -813,45 +813,61 @@ fn json_to_sql_param(v: &serde_json::Value) -> gauss_query::SqlParam {
     }
 }
 
-/// Execute a hand-written SQL query — **read-only-guarded**: the statement must
-/// be a single SELECT/WITH (no DDL/DML), enforced before it ever reaches the
-/// driver. Authenticated callers are permission-checked; results are cached.
-/// This is GaussAnalytics' safer take on Metabase's native-query editor.
-async fn native_dataset(
-    State(st): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<NativeRequest>,
-) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
-    if auth::bearer_token(&headers).is_some() {
-        let current = auth::authenticate(&st, &headers).await?;
-        current.perms.require(Permission::ReadDatabase {
-            database_id: req.database_id,
-        })?;
+/// Execute hand-written SQL against a data source — **read-only-guarded**: the
+/// statement must be a single SELECT/WITH (no DDL/DML), enforced before it ever
+/// reaches the driver. Authenticated callers are permission-checked
+/// (`ReadDatabase`); results are cached on the pooled connection. Shared by the
+/// native-query editor and notebook SQL/NL2SQL cells.
+pub(crate) async fn run_guarded_sql(
+    st: &AppState,
+    headers: &HeaderMap,
+    database_id: Uuid,
+    sql: &str,
+    params: &[serde_json::Value],
+) -> Result<gauss_drivers::QueryResult, ApiError> {
+    if auth::bearer_token(headers).is_some() {
+        let current = auth::authenticate(st, headers).await?;
+        current
+            .perms
+            .require(Permission::ReadDatabase { database_id })?;
     }
 
     let db = st
         .store
-        .database_by_id(req.database_id)
+        .database_by_id(database_id)
         .await?
-        .ok_or_else(|| CoreError::NotFound(format!("database {}", req.database_id)))?;
+        .ok_or_else(|| CoreError::NotFound(format!("database {database_id}")))?;
 
     // Read-only guardrail: reject DDL/DML and statement batching.
-    let sql = gauss_nl2sql::ensure_read_only(&req.sql)?;
+    let sql = gauss_nl2sql::ensure_read_only(sql)?;
     let compiled = gauss_query::CompiledQuery {
         sql,
-        params: req.params.iter().map(json_to_sql_param).collect(),
+        params: params.iter().map(json_to_sql_param).collect(),
     };
 
     let key = cache::cache_key(db.id, &compiled);
     if let Some(hit) = st.cache.get(&key) {
-        return Ok(Json(hit));
+        return Ok(hit);
     }
     // Reuse the pooled connection for this source.
     let driver = st.connections.driver_for(&db).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
     st.usage.record_query();
-    Ok(Json(result))
+    Ok(result)
+}
+
+/// Execute a hand-written SQL query (the native-query editor). This is
+/// GaussAnalytics' safer take on Metabase's native-query editor; see
+/// [`run_guarded_sql`] for the governed execution path.
+async fn native_dataset(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<NativeRequest>,
+) -> Result<Json<gauss_drivers::QueryResult>, ApiError> {
+    Ok(Json(
+        run_guarded_sql(&st, &headers, req.database_id, &req.sql, &req.params).await?,
+    ))
 }
 
 /// Usage analytics for operators (admin).
@@ -943,19 +959,24 @@ struct Nl2SqlApiRequest {
     history: Vec<gauss_nl2sql::Turn>,
 }
 
-async fn nl2sql_translate(
-    State(st): State<AppState>,
-    Json(req): Json<Nl2SqlApiRequest>,
-) -> Result<Json<GuardedQuery>, ApiError> {
+/// Translate a natural-language prompt to guardrailed SQL, grounded against the
+/// data source's synced schema. Shared by the `/nl2sql` endpoint and notebook
+/// NL2SQL cells. Errors with `NotFound` when the NL2SQL engine is disabled.
+pub(crate) async fn translate_to_sql(
+    st: &AppState,
+    database_id: Uuid,
+    prompt: String,
+    history: Vec<gauss_nl2sql::Turn>,
+) -> Result<GuardedQuery, ApiError> {
     let pipeline = st
         .nl2sql_pipeline()
         .ok_or_else(|| CoreError::NotFound("NL2SQL integration is not enabled".into()))?;
 
     let db = st
         .store
-        .database_by_id(req.database_id)
+        .database_by_id(database_id)
         .await?
-        .ok_or_else(|| CoreError::NotFound(format!("database {}", req.database_id)))?;
+        .ok_or_else(|| CoreError::NotFound(format!("database {database_id}")))?;
 
     // Build grounded schema context from synced metadata.
     let tables = st.store.list_tables(db.id).await?;
@@ -974,14 +995,22 @@ async fn nl2sql_translate(
             .collect(),
     };
 
-    let guarded = pipeline
+    Ok(pipeline
         .propose(&Nl2SqlRequest {
-            prompt: req.prompt,
+            prompt,
             context,
-            history: req.history,
+            history,
         })
-        .await?;
-    Ok(Json(guarded))
+        .await?)
+}
+
+async fn nl2sql_translate(
+    State(st): State<AppState>,
+    Json(req): Json<Nl2SqlApiRequest>,
+) -> Result<Json<GuardedQuery>, ApiError> {
+    Ok(Json(
+        translate_to_sql(&st, req.database_id, req.prompt, req.history).await?,
+    ))
 }
 
 fn field_type_label(t: FieldType) -> &'static str {
@@ -1562,11 +1591,17 @@ mod tests {
                         id: Uuid::new_v4(),
                         kind: CellKind::Markdown,
                         source: "# Heading".into(),
+                        database_id: None,
+                        output_var: None,
+                        input_var: None,
                     },
                     NotebookCell {
                         id: Uuid::new_v4(),
                         kind: CellKind::Python,
                         source: "1 + 1".into(),
+                        database_id: None,
+                        output_var: None,
+                        input_var: None,
                     },
                 ],
             }),
@@ -1588,6 +1623,9 @@ mod tests {
                     id: Uuid::new_v4(),
                     kind: CellKind::Python,
                     source: "2 * 2".into(),
+                    database_id: None,
+                    output_var: None,
+                    input_var: None,
                 }],
             }),
         )
@@ -1618,6 +1656,7 @@ mod tests {
 
     #[tokio::test]
     async fn notebook_run_errors_when_jupyter_disabled() {
+        use gauss_core::domain::{CellKind, NotebookCell};
         // Default config has jupyter disabled, so no gateway is wired.
         let (st, _db_id) = test_state().await;
         ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
@@ -1645,7 +1684,14 @@ mod tests {
             Path(created.0.id),
             bearer(&login.token),
             Json(content::RunCellRequest {
-                code: "print('hi')".into(),
+                cell: NotebookCell {
+                    id: Uuid::new_v4(),
+                    kind: CellKind::Python,
+                    source: "print('hi')".into(),
+                    database_id: None,
+                    output_var: None,
+                    input_var: None,
+                },
             }),
         )
         .await;
@@ -2839,7 +2885,9 @@ mod tests {
             Request::post(format!("/api/notebooks/{nb_id}/run"))
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
-                .body(Body::from(r#"{"code":"1+1"}"#))
+                .body(Body::from(
+                    r#"{"cell":{"id":"00000000-0000-0000-0000-000000000002","kind":"python","source":"1+1"}}"#,
+                ))
                 .unwrap(),
         )
         .await;
