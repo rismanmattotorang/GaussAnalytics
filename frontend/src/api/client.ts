@@ -212,6 +212,40 @@ export interface DashboardCardResult {
   error?: string;
 }
 
+// --- Notebooks ----------------------------------------------------------
+
+export type CellKind = "markdown" | "python";
+
+export interface NotebookCell {
+  id: string;
+  kind: CellKind;
+  source: string;
+}
+
+export interface Notebook {
+  id: string;
+  name: string;
+  collection_id?: string | null;
+  cells: NotebookCell[];
+  created_at: string;
+}
+
+/** One normalized output of executing a notebook cell (mirrors the Rust enum). */
+export type CellOutput =
+  | { kind: "stream"; name: string; text: string }
+  | { kind: "data"; data: Record<string, unknown> }
+  | { kind: "error"; ename: string; evalue: string; traceback: string[] };
+
+export interface RunCellResponse {
+  kernel_id: string;
+  outputs: CellOutput[];
+}
+
+export interface KernelStatus {
+  kernel_id?: string | null;
+  running: boolean;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -347,4 +381,25 @@ export const api = {
       "GET",
       token,
     ),
+  notebooks: () => request<Notebook[]>("/notebooks"),
+  getNotebook: (id: string) => request<Notebook>(`/notebooks/${id}`),
+  createNotebook: (
+    body: { name: string; cells?: NotebookCell[]; collection_id?: string | null },
+    token: string,
+  ) => authed<Notebook>("/notebooks", "POST", token, body),
+  updateNotebook: (
+    id: string,
+    body: { name: string; cells: NotebookCell[]; collection_id?: string | null },
+    token: string,
+  ) => authed<Notebook>(`/notebooks/${id}`, "PUT", token, body),
+  deleteNotebook: (id: string, token: string) =>
+    authed<{ ok: boolean }>(`/notebooks/${id}`, "DELETE", token),
+  startKernel: (id: string, token: string) =>
+    authed<KernelStatus>(`/notebooks/${id}/kernel`, "POST", token),
+  stopKernel: (id: string, token: string) =>
+    authed<KernelStatus>(`/notebooks/${id}/kernel`, "DELETE", token),
+  interruptKernel: (id: string, token: string) =>
+    authed<{ ok: boolean }>(`/notebooks/${id}/interrupt`, "POST", token),
+  runCell: (id: string, code: string, token: string) =>
+    authed<RunCellResponse>(`/notebooks/${id}/run`, "POST", token, { code }),
 };

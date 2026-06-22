@@ -14,6 +14,7 @@ use gauss_llm::{
 };
 use gauss_mcp_gateway::McpGateway;
 use gauss_nl2sql::{LlmNl2Sql, Nl2SqlPipeline};
+use gauss_notebook::KernelGateway;
 use uuid::Uuid;
 
 use crate::cache::ResultCache;
@@ -134,6 +135,13 @@ pub struct AppState {
     pub ai: Arc<RwLock<AiState>>,
     /// Reused live connections to data sources (one pool/client per source).
     pub connections: Arc<ConnectionRegistry>,
+    /// Notebook kernel gateway to the user's local Jupyter Server. Present only
+    /// when `jupyter.enabled` is set; otherwise notebook execution endpoints
+    /// report that the integration is disabled.
+    pub notebook: Option<Arc<KernelGateway>>,
+    /// Live kernel sessions: notebook id → its running Jupyter kernel id. A
+    /// process-lifetime map (kernels live in the user's Jupyter, not here).
+    pub kernels: Arc<RwLock<HashMap<Uuid, String>>>,
 }
 
 /// The LLM providers this build can drive for NL2SQL. OpenRouter, LiteLLM, and
@@ -259,6 +267,17 @@ impl AppState {
 
         let cache = Arc::new(ResultCache::new(config.server.cache_ttl_secs));
 
+        // Build the notebook kernel gateway only when the operator has opted in.
+        // No connection is attempted here; it is lazy, on first kernel start.
+        let notebook = if config.jupyter.enabled {
+            Some(Arc::new(KernelGateway::new(
+                config.jupyter.url.clone(),
+                config.jupyter.token.clone(),
+            )))
+        } else {
+            None
+        };
+
         Ok(Self {
             config: Arc::new(config),
             store,
@@ -267,7 +286,46 @@ impl AppState {
             mcp,
             ai,
             connections: Arc::new(ConnectionRegistry::default()),
+            notebook,
+            kernels: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// The notebook kernel gateway, or a clear error when the integration is
+    /// disabled (so handlers can `?` it and surface a helpful message).
+    pub fn kernel_gateway(&self) -> CoreResult<Arc<KernelGateway>> {
+        self.notebook.clone().ok_or_else(|| {
+            CoreError::NotFound(
+                "notebook integration is not enabled (set GAUSS_JUPYTER_ENABLED=true and run a \
+                 local Jupyter Server)"
+                    .into(),
+            )
+        })
+    }
+
+    /// The kernel id currently bound to `notebook_id`, if one is running.
+    pub fn notebook_kernel(&self, notebook_id: Uuid) -> Option<String> {
+        self.kernels
+            .read()
+            .expect("kernels lock")
+            .get(&notebook_id)
+            .cloned()
+    }
+
+    /// Bind a started kernel id to a notebook.
+    pub fn set_notebook_kernel(&self, notebook_id: Uuid, kernel_id: String) {
+        self.kernels
+            .write()
+            .expect("kernels lock")
+            .insert(notebook_id, kernel_id);
+    }
+
+    /// Unbind and return the kernel id for a notebook (on stop/delete).
+    pub fn take_notebook_kernel(&self, notebook_id: Uuid) -> Option<String> {
+        self.kernels
+            .write()
+            .expect("kernels lock")
+            .remove(&notebook_id)
     }
 
     /// The current NL2SQL pipeline (cloned out of the lock), if enabled.

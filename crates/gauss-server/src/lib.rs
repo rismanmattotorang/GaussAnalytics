@@ -102,6 +102,25 @@ pub fn router(state: AppState) -> Router {
                 .delete(content::delete_dashboard),
         )
         .route("/dashboards/{id}/run", post(content::run_dashboard))
+        .route(
+            "/notebooks",
+            get(content::list_notebooks).post(content::create_notebook),
+        )
+        .route(
+            "/notebooks/{id}",
+            get(content::get_notebook)
+                .put(content::update_notebook)
+                .delete(content::delete_notebook),
+        )
+        .route(
+            "/notebooks/{id}/kernel",
+            post(content::notebook_start_kernel).delete(content::notebook_stop_kernel),
+        )
+        .route(
+            "/notebooks/{id}/interrupt",
+            post(content::notebook_interrupt),
+        )
+        .route("/notebooks/{id}/run", post(content::notebook_run))
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
         .route("/usage", get(usage_stats))
@@ -1520,6 +1539,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn notebook_crud_round_trips() {
+        use gauss_core::domain::{CellKind, NotebookCell};
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Create a notebook with a Markdown and a Python cell.
+        let created = content::create_notebook(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::SaveNotebookRequest {
+                name: "Analysis".into(),
+                collection_id: None,
+                cells: vec![
+                    NotebookCell {
+                        id: Uuid::new_v4(),
+                        kind: CellKind::Markdown,
+                        source: "# Heading".into(),
+                    },
+                    NotebookCell {
+                        id: Uuid::new_v4(),
+                        kind: CellKind::Python,
+                        source: "1 + 1".into(),
+                    },
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.0.cells.len(), 2);
+        let nb_id = created.0.id;
+
+        // Update (rename + drop a cell), preserving the creation time.
+        let updated = content::update_notebook(
+            State(st.clone()),
+            Path(nb_id),
+            hdr.clone(),
+            Json(content::SaveNotebookRequest {
+                name: "Renamed".into(),
+                collection_id: None,
+                cells: vec![NotebookCell {
+                    id: Uuid::new_v4(),
+                    kind: CellKind::Python,
+                    source: "2 * 2".into(),
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.0.name, "Renamed");
+        assert_eq!(updated.0.cells.len(), 1);
+        assert_eq!(updated.0.created_at, created.0.created_at);
+
+        // List + get reflect the saved state.
+        let all = content::list_notebooks(State(st.clone())).await.unwrap();
+        assert_eq!(all.0.len(), 1);
+        let got = content::get_notebook(State(st.clone()), Path(nb_id))
+            .await
+            .unwrap();
+        assert_eq!(got.0.name, "Renamed");
+
+        // Delete removes it.
+        let _deleted = content::delete_notebook(State(st.clone()), Path(nb_id), hdr)
+            .await
+            .unwrap();
+        assert!(content::list_notebooks(State(st))
+            .await
+            .unwrap()
+            .0
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn notebook_run_errors_when_jupyter_disabled() {
+        // Default config has jupyter disabled, so no gateway is wired.
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        let created = content::create_notebook(
+            State(st.clone()),
+            bearer(&login.token),
+            Json(content::SaveNotebookRequest {
+                name: "NB".into(),
+                collection_id: None,
+                cells: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Running a cell surfaces the "integration disabled" error, not a panic.
+        let err = content::notebook_run(
+            State(st),
+            Path(created.0.id),
+            bearer(&login.token),
+            Json(content::RunCellRequest {
+                code: "print('hi')".into(),
+            }),
+        )
+        .await;
+        match err {
+            Err(e) => assert!(e.0.to_string().contains("not enabled"), "{}", e.0),
+            Ok(_) => panic!("expected an error when Jupyter is disabled"),
+        }
+    }
+
+    #[tokio::test]
     async fn non_admin_cannot_delete_or_test_data_sources() {
         let (st, db_id) = test_state().await;
         let hash = gauss_auth::hash_password("viewerpass12").unwrap();
@@ -2671,6 +2807,43 @@ mod tests {
         assert_eq!(s, StatusCode::OK);
         assert!(v["sql"].is_string());
         assert!(v["params"].is_array());
+
+        // notebooks: create over the router, then list reflects it.
+        let (s, v) = call(
+            app.clone(),
+            Request::post("/api/notebooks")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(
+                    r#"{"name":"NB","cells":[{"id":"00000000-0000-0000-0000-000000000001","kind":"python","source":"1+1"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["name"], "NB");
+        assert_eq!(v["cells"][0]["kind"], "python");
+
+        let (s, v) = call(
+            app.clone(),
+            Request::get("/api/notebooks").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v.as_array().unwrap().len(), 1);
+
+        // notebook run with Jupyter disabled -> 404 (integration not enabled).
+        let nb_id = v[0]["id"].as_str().unwrap().to_string();
+        let (s, _) = call(
+            app.clone(),
+            Request::post(format!("/api/notebooks/{nb_id}/run"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(r#"{"code":"1+1"}"#))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
 
         // nl2sql disabled -> 404
         let body = format!(r#"{{"database_id":"{db_id}","prompt":"hi"}}"#);

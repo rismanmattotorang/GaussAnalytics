@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** N0 delivered · N1–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** N0–N1 delivered · N2–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -121,8 +121,16 @@ permissions/`CreateContent`, and appear in export/import.
   REST mock + `tokio-tungstenite` WS mock) so CI stays green without Python. Wired to
   `GAUSS_JUPYTER_ENABLED` / `_URL` / `_TOKEN` (off by default). `@deepnote/blocks`/
   `convert` version pinning lands with the frontend in N1.
-- **N1 — Notebook MVP:** `gauss-notebook` doc model + CRUD + storage; React notebook
-  with **Markdown + Python** blocks; run/stream/interrupt via the gateway.
+- **N1 — Notebook MVP ✅ delivered:** the `Notebook`/`NotebookCell` document model
+  (in `gauss-core`) persists via the existing `ContentRepository` (`kind="notebook"`);
+  `gauss-server` exposes notebook **CRUD** plus kernel control — `POST/DELETE
+  /api/notebooks/{id}/kernel` (start/attach + shut down), `POST .../interrupt`, and
+  `POST .../run` (execute a Python cell on the notebook's kernel, returning normalized
+  outputs). A React **Notebooks** page edits ordered **Markdown + Python** cells, runs
+  code, and renders stream/data/error outputs. Kernel control reuses the N0 gateway and
+  stays behind `GAUSS_JUPYTER_ENABLED`: CRUD always works; run/kernel endpoints report
+  the integration as disabled until an operator opts in. Reactive re-runs and streaming
+  to the browser land in N2/N3.
 - **N2 — Data:** **SQL** + **NL2SQL** blocks (→ DataFrame injection, RLS-aware) and
   **Input** widgets feeding reactive re-runs.
 - **N3 — Visuals & reactivity:** **Chart** + **Big Number** blocks (nivo from a

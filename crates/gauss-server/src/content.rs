@@ -13,7 +13,7 @@ use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
     Card, CardLayout, Collection, Dashboard, DashboardParameter, DashboardTab, DashboardTextCard,
-    ParamBinding, ParamKind, RlsPolicy,
+    Notebook, NotebookCell, ParamBinding, ParamKind, RlsPolicy,
 };
 use gauss_core::error::CoreError;
 use gauss_core::gql::{CompareOp, Filter, Literal, Query};
@@ -32,6 +32,7 @@ const KIND_DASHBOARD: &str = "dashboard";
 const KIND_COLLECTION: &str = "collection";
 const KIND_METRIC: &str = "metric";
 const KIND_RLS: &str = "rls_policy";
+const KIND_NOTEBOOK: &str = "notebook";
 
 async fn require_create(st: &AppState, headers: &HeaderMap) -> Result<auth::CurrentUser, ApiError> {
     let current = auth::authenticate(st, headers).await?;
@@ -407,6 +408,208 @@ pub async fn run_dashboard(
         }
     }
     Ok(Json(out))
+}
+
+// --- Notebooks -----------------------------------------------------------
+//
+// An embedded data notebook (Markdown + Python cells). The document is content
+// like cards/dashboards; code cells execute on the user's **local** Jupyter
+// kernel via the notebook kernel gateway. Everything here is gated behind
+// `GAUSS_JUPYTER_ENABLED`: CRUD works regardless, but the kernel/run endpoints
+// report the integration as disabled until an operator opts in.
+
+#[derive(Deserialize)]
+pub struct SaveNotebookRequest {
+    pub name: String,
+    #[serde(default)]
+    pub collection_id: Option<Uuid>,
+    #[serde(default)]
+    pub cells: Vec<NotebookCell>,
+}
+
+async fn persist_notebook(st: &AppState, nb: &Notebook) -> Result<(), ApiError> {
+    st.store
+        .put_content(ContentRecord {
+            id: nb.id,
+            kind: KIND_NOTEBOOK.into(),
+            collection_id: nb.collection_id,
+            name: nb.name.clone(),
+            body_json: json_of(nb)?,
+            created_at: nb.created_at,
+        })
+        .await?;
+    Ok(())
+}
+
+pub async fn create_notebook(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SaveNotebookRequest>,
+) -> Result<Json<Notebook>, ApiError> {
+    require_create(&st, &headers).await?;
+    let nb = Notebook {
+        id: Uuid::new_v4(),
+        name: req.name,
+        collection_id: req.collection_id,
+        cells: req.cells,
+        created_at: Utc::now(),
+    };
+    persist_notebook(&st, &nb).await?;
+    Ok(Json(nb))
+}
+
+pub async fn list_notebooks(State(st): State<AppState>) -> Result<Json<Vec<Notebook>>, ApiError> {
+    Ok(Json(parse_all(
+        st.store.list_content(KIND_NOTEBOOK).await?,
+    )?))
+}
+
+async fn load_notebook(st: &AppState, id: Uuid) -> Result<Notebook, ApiError> {
+    let rec = st
+        .store
+        .get_content(id)
+        .await?
+        .filter(|r| r.kind == KIND_NOTEBOOK)
+        .ok_or_else(|| CoreError::NotFound(format!("notebook {id}")))?;
+    parse_one(&rec)
+}
+
+pub async fn get_notebook(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Notebook>, ApiError> {
+    Ok(Json(load_notebook(&st, id).await?))
+}
+
+/// Replace a notebook's definition (name + cells). Used by the editor to save.
+pub async fn update_notebook(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<SaveNotebookRequest>,
+) -> Result<Json<Notebook>, ApiError> {
+    require_create(&st, &headers).await?;
+    // Preserve the original creation time if the notebook already exists.
+    let created_at = match load_notebook(&st, id).await {
+        Ok(existing) => existing.created_at,
+        Err(_) => Utc::now(),
+    };
+    let nb = Notebook {
+        id,
+        name: req.name,
+        collection_id: req.collection_id,
+        cells: req.cells,
+        created_at,
+    };
+    persist_notebook(&st, &nb).await?;
+    Ok(Json(nb))
+}
+
+pub async fn delete_notebook(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_create(&st, &headers).await?;
+    // Best-effort: shut down any kernel bound to this notebook before deleting.
+    if let Some(kernel_id) = st.take_notebook_kernel(id) {
+        if let Ok(gw) = st.kernel_gateway() {
+            let _ = gw.shutdown_kernel(&kernel_id).await;
+        }
+    }
+    st.store.delete_content(id).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// A notebook's current kernel binding.
+#[derive(Serialize)]
+pub struct KernelStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel_id: Option<String>,
+    pub running: bool,
+}
+
+/// Get-or-start the kernel bound to a notebook, returning its id.
+async fn ensure_kernel(st: &AppState, notebook_id: Uuid) -> Result<String, ApiError> {
+    if let Some(k) = st.notebook_kernel(notebook_id) {
+        return Ok(k);
+    }
+    let gw = st.kernel_gateway()?;
+    let kernel_id = gw.start_kernel().await?;
+    st.set_notebook_kernel(notebook_id, kernel_id.clone());
+    Ok(kernel_id)
+}
+
+/// Start (or attach to) the Jupyter kernel for a notebook.
+pub async fn notebook_start_kernel(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<KernelStatus>, ApiError> {
+    require_create(&st, &headers).await?;
+    let kernel_id = ensure_kernel(&st, id).await?;
+    Ok(Json(KernelStatus {
+        kernel_id: Some(kernel_id),
+        running: true,
+    }))
+}
+
+/// Shut down the notebook's kernel (if any).
+pub async fn notebook_stop_kernel(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<KernelStatus>, ApiError> {
+    require_create(&st, &headers).await?;
+    if let Some(kernel_id) = st.take_notebook_kernel(id) {
+        st.kernel_gateway()?.shutdown_kernel(&kernel_id).await?;
+    }
+    Ok(Json(KernelStatus {
+        kernel_id: None,
+        running: false,
+    }))
+}
+
+/// Interrupt the notebook's running kernel (stop a runaway cell).
+pub async fn notebook_interrupt(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_create(&st, &headers).await?;
+    if let Some(kernel_id) = st.notebook_kernel(id) {
+        st.kernel_gateway()?.interrupt_kernel(&kernel_id).await?;
+    }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct RunCellRequest {
+    /// Python source to execute on the notebook's kernel.
+    pub code: String,
+}
+
+#[derive(Serialize)]
+pub struct RunCellResponse {
+    /// The kernel that ran the code.
+    pub kernel_id: String,
+    /// Normalized outputs in arrival order (stream/data/error).
+    pub outputs: Vec<gauss_notebook::CellOutput>,
+}
+
+/// Execute a Python cell on the notebook's kernel (starting one on first use)
+/// and return its collected outputs. Requires the notebook integration enabled.
+pub async fn notebook_run(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<RunCellRequest>,
+) -> Result<Json<RunCellResponse>, ApiError> {
+    require_create(&st, &headers).await?;
+    let gw = st.kernel_gateway()?;
+    let kernel_id = ensure_kernel(&st, id).await?;
+    let outputs = gw.execute_collect(&kernel_id, &req.code).await?;
+    Ok(Json(RunCellResponse { kernel_id, outputs }))
 }
 
 // --- Export / import -----------------------------------------------------
