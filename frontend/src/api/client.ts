@@ -37,6 +37,28 @@ export interface Database {
   created_at: string;
 }
 
+/** Result of probing a candidate data-source connection. */
+export interface TestConnectionResult {
+  ok: boolean;
+  table_count: number;
+}
+
+/** Result of syncing a data source's schema. */
+export interface SyncResult {
+  database_id: string;
+  tables: Array<{ name: string; columns: number }>;
+}
+
+/** Current AI/NL2SQL configuration (secrets redacted). */
+export interface AiSettings {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  base_url: string;
+  has_api_key: boolean;
+  supported_providers: string[];
+}
+
 export interface Field {
   id: string;
   name: string;
@@ -208,6 +230,19 @@ export const api = {
   health: () => request<Health>("/health"),
   databases: () => request<Database[]>("/databases"),
   tables: (databaseId: string) => request<Table[]>(`/databases/${databaseId}/tables`),
+  createDatabase: (
+    body: { name: string; kind: DataSourceKind; connection_uri?: string },
+    token: string,
+  ) => authed<Database>("/databases", "POST", token, body),
+  testConnection: (
+    body: { kind: DataSourceKind; connection_uri: string },
+    token: string,
+  ) => authed<TestConnectionResult>("/databases/test", "POST", token, body),
+  syncDatabase: (id: string, token: string) =>
+    authed<SyncResult>(`/databases/${id}/sync`, "POST", token),
+  deleteDatabase: (id: string, token: string) =>
+    authed<{ deleted: string }>(`/databases/${id}`, "DELETE", token),
+  aiSettings: (token: string) => authed<AiSettings>("/settings/ai", "GET", token),
   run: (database_id: string, query: Query) =>
     request<QueryResult>("/dataset/run", {
       method: "POST",

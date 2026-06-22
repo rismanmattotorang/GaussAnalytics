@@ -46,6 +46,50 @@ pub struct AppState {
     pub nl2sql: Option<Arc<Nl2SqlPipeline<LlmNl2Sql>>>,
 }
 
+/// The LLM providers this build can drive for NL2SQL. OpenRouter, LiteLLM, and
+/// vLLM are OpenAI-compatible and reuse the OpenAI client with a base URL.
+/// `bedrock` is recognized but is reached via an OpenAI-compatible gateway
+/// (e.g. LiteLLM) rather than bundling the AWS SDK.
+pub const NL2SQL_PROVIDERS: &[&str] = &[
+    "mock",
+    "openai",
+    "anthropic",
+    "ollama",
+    "gemini",
+    "openrouter",
+    "litellm",
+    "vllm",
+    "bedrock",
+];
+
+/// Default OpenAI-compatible base URL for OpenRouter.
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+/// Build an OpenAI-compatible client (OpenAI, OpenRouter, LiteLLM, vLLM). All
+/// speak the Chat Completions wire format; they differ only in base URL.
+fn openai_compatible(
+    cfg: &Nl2SqlConfig,
+    default_base: Option<&str>,
+    base_required: bool,
+    provider: &str,
+) -> gauss_core::CoreResult<Arc<dyn LlmService>> {
+    let base = if !cfg.base_url.is_empty() {
+        Some(cfg.base_url.clone())
+    } else {
+        default_base.map(str::to_string)
+    };
+    if base_required && base.is_none() {
+        return Err(CoreError::Config(format!(
+            "NL2SQL provider {provider:?} requires GAUSS_NL2SQL_BASE_URL (its OpenAI-compatible endpoint)"
+        )));
+    }
+    let mut svc = OpenAiLlmService::new(cfg.api_key.clone(), cfg.model.clone());
+    if let Some(b) = base {
+        svc = svc.with_base_url(b);
+    }
+    Ok(Arc::new(svc))
+}
+
 /// Build the in-process LLM backend for NL2SQL from configuration.
 ///
 /// Replaces the former external, credentialed NL2SQL service: GaussAnalytics
@@ -54,12 +98,22 @@ fn build_nl2sql_llm(cfg: &Nl2SqlConfig) -> gauss_core::CoreResult<Arc<dyn LlmSer
     let model = cfg.model.clone();
     let llm: Arc<dyn LlmService> = match cfg.provider.to_ascii_lowercase().as_str() {
         "mock" | "" => Arc::new(MockLlmService::new()),
-        "openai" => {
-            let mut svc = OpenAiLlmService::new(cfg.api_key.clone(), model);
-            if !cfg.base_url.is_empty() {
-                svc = svc.with_base_url(cfg.base_url.clone());
-            }
-            Arc::new(svc)
+        "openai" => openai_compatible(cfg, None, false, "openai")?,
+        // OpenRouter and LiteLLM are OpenAI-compatible gateways. OpenRouter has
+        // a well-known endpoint; LiteLLM is self-hosted, so its URL is required.
+        "openrouter" => openai_compatible(cfg, Some(OPENROUTER_BASE_URL), false, "openrouter")?,
+        "litellm" => openai_compatible(cfg, None, true, "litellm")?,
+        // vLLM exposes an OpenAI-compatible server; its base URL is required.
+        "vllm" => openai_compatible(cfg, None, true, "vllm")?,
+        // AWS Bedrock is reached through an OpenAI-compatible gateway (LiteLLM or
+        // bedrock-access-gateway) rather than bundling the AWS SDK.
+        "bedrock" => {
+            return Err(CoreError::Config(
+                "provider \"bedrock\": point GaussAnalytics at a Bedrock OpenAI-compatible \
+                 gateway — set provider \"litellm\" (or \"openai\") and GAUSS_NL2SQL_BASE_URL \
+                 to the gateway URL"
+                    .into(),
+            ))
         }
         "anthropic" => {
             let mut svc = AnthropicLlmService::new(cfg.api_key.clone(), model);
@@ -84,7 +138,8 @@ fn build_nl2sql_llm(cfg: &Nl2SqlConfig) -> gauss_core::CoreResult<Arc<dyn LlmSer
         }
         other => {
             return Err(CoreError::Config(format!(
-                "unknown NL2SQL provider {other:?} (expected one of: mock, openai, anthropic, ollama, gemini)"
+                "unknown NL2SQL provider {other:?} (expected one of: {})",
+                NL2SQL_PROVIDERS.join(", ")
             )))
         }
     };
@@ -123,5 +178,45 @@ impl AppState {
             mcp,
             nl2sql,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(provider: &str, base_url: &str) -> Nl2SqlConfig {
+        Nl2SqlConfig {
+            enabled: true,
+            provider: provider.into(),
+            model: "m".into(),
+            api_key: "k".into(),
+            base_url: base_url.into(),
+            timeout_ms: 30_000,
+        }
+    }
+
+    #[test]
+    fn openai_compatible_providers_build() {
+        // mock + the OpenAI-compatible providers resolve to a client.
+        assert!(build_nl2sql_llm(&cfg("mock", "")).is_ok());
+        assert!(build_nl2sql_llm(&cfg("openai", "")).is_ok());
+        // OpenRouter has a default endpoint, so no base URL is required.
+        assert!(build_nl2sql_llm(&cfg("openrouter", "")).is_ok());
+        // vLLM / LiteLLM are self-hosted: base URL required.
+        assert!(build_nl2sql_llm(&cfg("vllm", "http://localhost:8000/v1")).is_ok());
+        assert!(build_nl2sql_llm(&cfg("vllm", "")).is_err());
+        assert!(build_nl2sql_llm(&cfg("litellm", "http://localhost:4000")).is_ok());
+        assert!(build_nl2sql_llm(&cfg("litellm", "")).is_err());
+    }
+
+    #[test]
+    fn bedrock_directs_to_gateway_and_unknown_errors() {
+        let err = match build_nl2sql_llm(&cfg("bedrock", "")) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("bedrock should not build a direct client"),
+        };
+        assert!(err.contains("gateway"), "{err}");
+        assert!(build_nl2sql_llm(&cfg("does-not-exist", "")).is_err());
     }
 }
