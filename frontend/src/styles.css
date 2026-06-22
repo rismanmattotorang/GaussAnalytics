@@ -601,3 +601,36 @@ code {
   margin-top: 6px;
   border-radius: 6px;
 }
+.nb-cell__data-controls,
+.nb-cell__input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.nb-cell[data-kind="sql"] { border-left: 3px solid var(--ok); }
+.nb-cell[data-kind="nl2sql"] { border-left: 3px solid #c084fc; }
+.nb-cell[data-kind="input"] { border-left: 3px solid #fbbf24; }
+.nb-cell__var {
+  width: 9rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.85rem;
+}
+.nb-cell__val {
+  flex: 1;
+  min-width: 8rem;
+}
+.nb-cell__sql {
+  background: #0b1020;
+  border-radius: 6px;
+  border-left: 2px solid var(--ok);
+  padding: 6px 8px;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-size: 0.82rem;
+}
+.nb-preview {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow: auto;
+}

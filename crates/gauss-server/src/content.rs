@@ -12,8 +12,8 @@ use axum::Json;
 use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
-    Card, CardLayout, Collection, Dashboard, DashboardParameter, DashboardTab, DashboardTextCard,
-    Notebook, NotebookCell, ParamBinding, ParamKind, RlsPolicy,
+    Card, CardLayout, CellKind, Collection, Dashboard, DashboardParameter, DashboardTab,
+    DashboardTextCard, Notebook, NotebookCell, ParamBinding, ParamKind, RlsPolicy,
 };
 use gauss_core::error::CoreError;
 use gauss_core::gql::{CompareOp, Filter, Literal, Query};
@@ -585,8 +585,8 @@ pub async fn notebook_interrupt(
 
 #[derive(Deserialize)]
 pub struct RunCellRequest {
-    /// Python source to execute on the notebook's kernel.
-    pub code: String,
+    /// The cell to execute (its current, possibly-unsaved, definition).
+    pub cell: NotebookCell,
 }
 
 #[derive(Serialize)]
@@ -595,10 +595,104 @@ pub struct RunCellResponse {
     pub kernel_id: String,
     /// Normalized outputs in arrival order (stream/data/error).
     pub outputs: Vec<gauss_notebook::CellOutput>,
+    /// For SQL / NL2SQL cells: the SQL that was executed (NL2SQL is translated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql: Option<String>,
+    /// For SQL / NL2SQL cells: the result rows, for an inline preview table.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<gauss_drivers::QueryResult>,
 }
 
-/// Execute a Python cell on the notebook's kernel (starting one on first use)
-/// and return its collected outputs. Requires the notebook integration enabled.
+/// Validate a kernel variable name (so generated injection code is safe). A
+/// Python identifier: leading letter/underscore, then alphanumerics/underscores.
+fn valid_ident(name: &str) -> Result<String, ApiError> {
+    let mut chars = name.chars();
+    let ok = match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        _ => false,
+    };
+    if ok {
+        Ok(name.to_string())
+    } else {
+        Err(CoreError::InvalidQuery(format!("invalid variable name {name:?}")).into())
+    }
+}
+
+/// Embed `s` as a single-quoted Python string literal (escaping `\`, `'`, and
+/// newlines). Used to ship JSON safely into generated kernel code.
+fn py_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Python that reconstructs a query result as a pandas `DataFrame` bound to
+/// `var`, then echoes it so the kernel returns a preview repr. Data travels as
+/// JSON parsed in-kernel — no string-escaping or type-coercion hazards.
+fn inject_dataframe_code(var: &str, result: &gauss_drivers::QueryResult) -> String {
+    let payload = serde_json::json!({ "rows": result.rows, "cols": result.columns });
+    let json = payload.to_string();
+    format!(
+        "import pandas as _pd, json as _json\n\
+         _gd = _json.loads({lit})\n\
+         {var} = _pd.DataFrame(_gd['rows'], columns=_gd['cols'])\n\
+         {var}",
+        lit = py_str(&json),
+        var = var,
+    )
+}
+
+/// Parse an `Input` cell's raw value into a typed JSON value (int, float, bool,
+/// else string) so the injected kernel variable has a natural Python type.
+fn parse_input_value(raw: &str) -> serde_json::Value {
+    let t = raw.trim();
+    if let Ok(i) = t.parse::<i64>() {
+        return serde_json::json!(i);
+    }
+    if let Ok(f) = t.parse::<f64>() {
+        return serde_json::json!(f);
+    }
+    match t {
+        "true" => serde_json::json!(true),
+        "false" => serde_json::json!(false),
+        _ => serde_json::json!(raw),
+    }
+}
+
+/// Python that binds an input `var` to its (typed) value and echoes it.
+fn inject_value_code(var: &str, raw: &str) -> String {
+    let json = parse_input_value(raw).to_string();
+    format!(
+        "import json as _json\n{var} = _json.loads({lit})\n{var}",
+        var = var,
+        lit = py_str(&json),
+    )
+}
+
+/// Execute a notebook cell on its kernel (starting one on first use) and return
+/// the collected outputs. Behavior by kind:
+/// - **Python** runs the source as code.
+/// - **Sql** runs read-only-guarded SQL against the cell's data source, injects
+///   the result as a pandas `DataFrame` (`output_var`, default `df`), and
+///   returns a preview.
+/// - **Nl2sql** translates the prompt to guardrailed SQL first, then as **Sql**.
+/// - **Input** binds a typed variable into the kernel.
+/// - **Markdown** is not executed (no-op).
+///
+/// Requires the notebook integration enabled; SQL/NL2SQL additionally enforce
+/// `ReadDatabase` and the read-only guardrail via the shared governed path.
 pub async fn notebook_run(
     State(st): State<AppState>,
     Path(id): Path<Uuid>,
@@ -608,8 +702,47 @@ pub async fn notebook_run(
     require_create(&st, &headers).await?;
     let gw = st.kernel_gateway()?;
     let kernel_id = ensure_kernel(&st, id).await?;
-    let outputs = gw.execute_collect(&kernel_id, &req.code).await?;
-    Ok(Json(RunCellResponse { kernel_id, outputs }))
+    let cell = req.cell;
+
+    let mut resp = RunCellResponse {
+        kernel_id: kernel_id.clone(),
+        outputs: Vec::new(),
+        sql: None,
+        preview: None,
+    };
+
+    match cell.kind {
+        CellKind::Markdown => {}
+        CellKind::Python => {
+            resp.outputs = gw.execute_collect(&kernel_id, &cell.source).await?;
+        }
+        CellKind::Input => {
+            let var = valid_ident(cell.input_var.as_deref().unwrap_or_default())?;
+            let code = inject_value_code(&var, &cell.source);
+            resp.outputs = gw.execute_collect(&kernel_id, &code).await?;
+        }
+        CellKind::Sql | CellKind::Nl2sql => {
+            let db_id = cell.database_id.ok_or_else(|| {
+                CoreError::InvalidQuery("this cell needs a data source selected".into())
+            })?;
+            // Resolve the SQL: raw for Sql, translated (grounded) for Nl2sql.
+            let sql = if cell.kind == CellKind::Sql {
+                cell.source.clone()
+            } else {
+                crate::translate_to_sql(&st, db_id, cell.source.clone(), Vec::new())
+                    .await?
+                    .sql
+            };
+            // Governed execution (ReadDatabase + read-only guard + pooled conn).
+            let result = crate::run_guarded_sql(&st, &headers, db_id, &sql, &[]).await?;
+            let var = valid_ident(cell.output_var.as_deref().unwrap_or("df"))?;
+            let code = inject_dataframe_code(&var, &result);
+            resp.outputs = gw.execute_collect(&kernel_id, &code).await?;
+            resp.sql = Some(sql);
+            resp.preview = Some(result);
+        }
+    }
+    Ok(Json(resp))
 }
 
 // --- Export / import -----------------------------------------------------
@@ -825,4 +958,55 @@ pub async fn policies_for(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod notebook_codegen_tests {
+    use super::*;
+    use gauss_drivers::QueryResult;
+
+    #[test]
+    fn valid_ident_accepts_identifiers_and_rejects_junk() {
+        assert!(valid_ident("df").is_ok());
+        assert!(valid_ident("_sales_2025").is_ok());
+        assert!(valid_ident("").is_err());
+        assert!(valid_ident("2bad").is_err());
+        assert!(valid_ident("has space").is_err());
+        // No injection: punctuation that would break out of an assignment.
+        assert!(valid_ident("x; import os").is_err());
+    }
+
+    #[test]
+    fn py_str_escapes_quotes_and_backslashes() {
+        assert_eq!(py_str("a'b\\c"), "'a\\'b\\\\c'");
+    }
+
+    #[test]
+    fn dataframe_injection_carries_rows_as_json() {
+        let result = QueryResult {
+            columns: vec!["n".into(), "label".into()],
+            rows: vec![
+                vec![serde_json::json!(1), serde_json::json!("a")],
+                vec![serde_json::json!(2), serde_json::json!(null)],
+            ],
+        };
+        let code = inject_dataframe_code("df", &result);
+        assert!(code.contains("import pandas as _pd"));
+        assert!(code.contains("df = _pd.DataFrame(_gd['rows'], columns=_gd['cols'])"));
+        // The payload is embedded as parseable JSON (columns + rows present).
+        assert!(code.contains("\"cols\""));
+        assert!(code.contains("\"rows\""));
+        // Trailing echo of the variable produces a preview repr.
+        assert!(code.trim_end().ends_with("df"));
+    }
+
+    #[test]
+    fn input_values_are_typed() {
+        assert_eq!(parse_input_value("42"), serde_json::json!(42));
+        assert_eq!(parse_input_value(" 3.5 "), serde_json::json!(3.5));
+        assert_eq!(parse_input_value("true"), serde_json::json!(true));
+        assert_eq!(parse_input_value("hello"), serde_json::json!("hello"));
+        let code = inject_value_code("threshold", "10");
+        assert!(code.contains("threshold = _json.loads"));
+    }
 }

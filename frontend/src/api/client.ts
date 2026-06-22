@@ -214,12 +214,18 @@ export interface DashboardCardResult {
 
 // --- Notebooks ----------------------------------------------------------
 
-export type CellKind = "markdown" | "python";
+export type CellKind = "markdown" | "python" | "sql" | "nl2sql" | "input";
 
 export interface NotebookCell {
   id: string;
   kind: CellKind;
   source: string;
+  /** Target data source for sql / nl2sql cells. */
+  database_id?: string | null;
+  /** DataFrame variable name for sql / nl2sql cells (defaults to `df`). */
+  output_var?: string | null;
+  /** Variable name an input cell injects into the kernel. */
+  input_var?: string | null;
 }
 
 export interface Notebook {
@@ -239,6 +245,10 @@ export type CellOutput =
 export interface RunCellResponse {
   kernel_id: string;
   outputs: CellOutput[];
+  /** SQL that ran (sql / nl2sql cells; nl2sql is translated). */
+  sql?: string;
+  /** Result rows for an inline preview (sql / nl2sql cells). */
+  preview?: QueryResult;
 }
 
 export interface KernelStatus {
@@ -400,6 +410,6 @@ export const api = {
     authed<KernelStatus>(`/notebooks/${id}/kernel`, "DELETE", token),
   interruptKernel: (id: string, token: string) =>
     authed<{ ok: boolean }>(`/notebooks/${id}/interrupt`, "POST", token),
-  runCell: (id: string, code: string, token: string) =>
-    authed<RunCellResponse>(`/notebooks/${id}/run`, "POST", token, { code }),
+  runCell: (id: string, cell: NotebookCell, token: string) =>
+    authed<RunCellResponse>(`/notebooks/${id}/run`, "POST", token, { cell }),
 };

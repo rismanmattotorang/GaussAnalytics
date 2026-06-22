@@ -337,24 +337,46 @@ pub struct Dashboard {
     pub text_cards: Vec<DashboardTextCard>,
 }
 
-/// The kind of a notebook cell. `Markdown` is prose rendered by the web UI;
-/// `Python` is code executed on the user's local Jupyter kernel via the notebook
-/// kernel gateway (see the `gauss-notebook` crate).
+/// The kind of a notebook cell.
+///
+/// - `Markdown` — prose rendered by the web UI (not executed).
+/// - `Python` — code executed on the user's local Jupyter kernel.
+/// - `Sql` — read-only SQL run against a data source; its result is injected
+///   into the kernel as a pandas `DataFrame` (named by `output_var`).
+/// - `Nl2sql` — a natural-language prompt translated to guardrailed SQL, then
+///   run and injected exactly like a `Sql` cell.
+/// - `Input` — a named variable (text/number) injected into the kernel, so
+///   changing it and re-running downstream cells recomputes results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CellKind {
     Markdown,
     Python,
+    Sql,
+    Nl2sql,
+    Input,
 }
 
-/// One cell of a notebook: a kind plus its source text. The ordering of a
-/// notebook's `cells` vector is the display/execution order.
+/// One cell of a notebook. `source` carries the cell's primary text — code,
+/// Markdown, SQL, an NL prompt, or (for `Input`) the current value. The optional
+/// fields apply to data/input cells and default to absent for plain
+/// Markdown/Python cells (so older notebooks deserialize unchanged).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotebookCell {
     pub id: Uuid,
     pub kind: CellKind,
     #[serde(default)]
     pub source: String,
+    /// Target data source for `Sql` / `Nl2sql` cells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_id: Option<Uuid>,
+    /// Variable name the resulting `DataFrame` is bound to (`Sql` / `Nl2sql`).
+    /// Defaults to `df` when empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_var: Option<String>,
+    /// Variable name an `Input` cell injects into the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_var: Option<String>,
 }
 
 /// An embedded data notebook: an ordered list of Markdown/Python cells. Code

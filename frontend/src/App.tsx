@@ -128,8 +128,9 @@ export default function App() {
         ) : view === "settings" ? (
           <Settings token={token} />
         ) : view === "notebooks" ? (
-          // Notebooks don't require a data source (Python cells run on Jupyter).
-          <Notebooks token={token} />
+          // Notebooks don't require a data source (Python cells run on Jupyter);
+          // SQL/NL2SQL cells use the connected sources when present.
+          <Notebooks token={token} databases={databases} />
         ) : databases.length === 0 ? (
           <p className="muted">
             No data sources yet — add one in the <strong>Data sources</strong> tab.
