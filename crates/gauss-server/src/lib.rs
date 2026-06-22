@@ -121,6 +121,10 @@ pub fn router(state: AppState) -> Router {
             post(content::notebook_interrupt),
         )
         .route("/notebooks/{id}/run", post(content::notebook_run))
+        .route(
+            "/notebooks/{id}/run-order",
+            post(content::notebook_run_order),
+        )
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
         .route("/usage", get(usage_stats))

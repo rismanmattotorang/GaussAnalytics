@@ -634,3 +634,27 @@ code {
   max-height: 320px;
   overflow: auto;
 }
+.nb-cell[data-kind="chart"] { border-left: 3px solid #38bdf8; }
+.nb-cell[data-kind="bignumber"] { border-left: 3px solid #34d399; }
+.big-number {
+  background: #0f1530;
+  border: 1px solid #29313f;
+  border-radius: 10px;
+  padding: 0.9rem 1.1rem;
+  margin-top: 6px;
+  display: inline-block;
+  min-width: 9rem;
+}
+.big-number__value {
+  font-size: 2.2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+}
+.big-number__label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 4px;
+}

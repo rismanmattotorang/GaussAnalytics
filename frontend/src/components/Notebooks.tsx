@@ -8,6 +8,7 @@ import {
   type NotebookCell,
   type QueryResult,
 } from "../api/client";
+import { ResultView } from "./ResultView";
 
 /** Minimal, escaped Markdown → HTML (headings, bold, inline code, line breaks).
  * Input is escaped first, so the result is safe to inject. Mirrors the renderer
@@ -33,6 +34,8 @@ const KIND_LABEL: Record<CellKind, string> = {
   sql: "SQL",
   nl2sql: "NL2SQL",
   input: "Input",
+  chart: "Chart",
+  bignumber: "Big number",
 };
 
 function cellPlaceholder(kind: CellKind): string {
@@ -47,7 +50,23 @@ function cellPlaceholder(kind: CellKind): string {
       return "Ask in plain English…";
     case "input":
       return "value";
+    default:
+      return "";
   }
+}
+
+/** A single headline value taken from the first cell of a DataFrame. */
+function BigNumber({ result }: { result: QueryResult }) {
+  const value = result.rows[0]?.[0];
+  const label = result.columns[0] ?? "";
+  return (
+    <div className="big-number">
+      <div className="big-number__value">
+        {value === null || value === undefined ? "∅" : String(value)}
+      </div>
+      <div className="big-number__label">{label}</div>
+    </div>
+  );
 }
 
 /** A compact preview table for a SQL/NL2SQL cell result (first rows). */
@@ -229,17 +248,44 @@ export function Notebooks({
     }
   }
 
-  // Reactive re-run: execute every cell top-to-bottom. Inputs are re-injected
-  // and downstream SQL/Python recompute with the new values. Stops on error.
+  // Run cells in a given dependency order (ids), stopping on the first error.
+  async function runSequence(order: string[]) {
+    const byId = new Map(cells.map((c) => [c.id, c]));
+    for (const id of order) {
+      const cell = byId.get(id);
+      if (!cell) continue;
+      const ok = await runCell(cell);
+      if (!ok) break;
+    }
+  }
+
+  // Reactive re-run of the whole notebook, in dependency (topological) order
+  // computed server-side. A cycle surfaces as an error.
   async function runAll() {
     if (!token || !open) return;
     setError(null);
     setRunningAll(true);
     try {
-      for (const cell of cells) {
-        const ok = await runCell(cell);
-        if (!ok) break;
-      }
+      const { order } = await api.runOrder(open.id, cells, null, token);
+      await runSequence(order);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setRunningAll(false);
+    }
+  }
+
+  // Re-run a changed cell and only its transitive dependents (the minimal
+  // reactive update) — e.g. tweak an Input, then recompute what depends on it.
+  async function runDownstream(cell: NotebookCell) {
+    if (!token || !open) return;
+    setError(null);
+    setRunningAll(true);
+    try {
+      const { order } = await api.runOrder(open.id, cells, cell.id, token);
+      await runSequence(order);
+    } catch (e) {
+      fail(e);
     } finally {
       setRunningAll(false);
     }
@@ -311,10 +357,16 @@ export function Notebooks({
 
         {cells.map((cell, i) => {
           const isData = cell.kind === "sql" || cell.kind === "nl2sql";
+          const usesVar = cell.kind === "chart" || cell.kind === "bignumber";
+          const hasEditor =
+            cell.kind === "python" ||
+            cell.kind === "sql" ||
+            cell.kind === "nl2sql" ||
+            cell.kind === "markdown";
           const cellMeta = meta[cell.id];
           const cellOutputs = outputs[cell.id] ?? [];
-          // For data cells the structured preview replaces the echoed repr;
-          // still surface any errors from injection.
+          // When a structured preview is present it replaces the echoed repr;
+          // still surface any errors from injection/fetch.
           const shownOutputs = cellMeta?.preview
             ? cellOutputs.filter((o) => o.kind === "error")
             : cellOutputs;
@@ -334,9 +386,19 @@ export function Notebooks({
                     ↓
                   </button>
                   {cell.kind !== "markdown" && (
-                    <button onClick={() => runCell(cell)} disabled={running === cell.id}>
-                      {running === cell.id ? "Running…" : "Run"}
-                    </button>
+                    <>
+                      <button onClick={() => runCell(cell)} disabled={running === cell.id}>
+                        {running === cell.id ? "Running…" : "Run"}
+                      </button>
+                      <button
+                        className="link"
+                        title="Run this cell and everything that depends on it"
+                        onClick={() => runDownstream(cell)}
+                        disabled={runningAll}
+                      >
+                        Run ↓
+                      </button>
+                    </>
                   )}
                   <button className="link" onClick={() => removeCell(cell.id)}>
                     Delete
@@ -344,7 +406,7 @@ export function Notebooks({
                 </span>
               </div>
 
-              {/* Data cells: source-and-variable controls. */}
+              {/* Data cells: data source + output variable. */}
               {isData && (
                 <div className="nb-cell__data-controls">
                   <select
@@ -370,8 +432,22 @@ export function Notebooks({
                 </div>
               )}
 
+              {/* Chart / big-number cells: which DataFrame variable to read. */}
+              {usesVar && (
+                <div className="nb-cell__data-controls">
+                  <span className="muted">DataFrame</span>
+                  <input
+                    className="nb-cell__var"
+                    placeholder="df"
+                    aria-label="dataframe variable"
+                    value={cell.input_var ?? ""}
+                    onChange={(e) => patchCell(cell.id, { input_var: e.target.value || null })}
+                  />
+                </div>
+              )}
+
               {/* Input cells: variable name + value. */}
-              {cell.kind === "input" ? (
+              {cell.kind === "input" && (
                 <div className="nb-cell__input">
                   <input
                     className="nb-cell__var"
@@ -389,7 +465,9 @@ export function Notebooks({
                     onChange={(e) => patchCell(cell.id, { source: e.target.value })}
                   />
                 </div>
-              ) : (
+              )}
+
+              {hasEditor && (
                 <textarea
                   className="nb-cell__src native__editor"
                   value={cell.source}
@@ -412,7 +490,16 @@ export function Notebooks({
                 <pre className="nb-cell__sql">{cellMeta.sql}</pre>
               )}
 
-              {cellMeta?.preview && <PreviewTable result={cellMeta.preview} />}
+              {/* Preview rendering by kind: a nivo chart, a headline number, or
+                  a table for SQL/NL2SQL data cells. */}
+              {cellMeta?.preview &&
+                (cell.kind === "chart" ? (
+                  <ResultView result={cellMeta.preview} />
+                ) : cell.kind === "bignumber" ? (
+                  <BigNumber result={cellMeta.preview} />
+                ) : (
+                  <PreviewTable result={cellMeta.preview} />
+                ))}
 
               {shownOutputs.map((out, k) => (
                 <OutputView key={k} out={out} />
@@ -434,6 +521,12 @@ export function Notebooks({
           <button className="link" onClick={() => addCell("input")}>
             + Input
           </button>
+          <button className="link" onClick={() => addCell("chart")}>
+            + Chart
+          </button>
+          <button className="link" onClick={() => addCell("bignumber")}>
+            + Big number
+          </button>
           <button className="link" onClick={() => addCell("markdown")}>
             + Markdown
           </button>
@@ -447,9 +540,11 @@ export function Notebooks({
       <h2>Notebooks</h2>
       <p className="muted">
         Mix Markdown notes, SQL/NL2SQL queries (results land as a pandas
-        DataFrame), inputs, and Python that runs on your local Jupyter kernel.
-        Code execution requires <code>GAUSS_JUPYTER_ENABLED</code> and a running
-        Jupyter Server.
+        DataFrame), inputs, Python, and nivo charts / big numbers over any
+        DataFrame — all on your local Jupyter kernel. <strong>Run all</strong>{" "}
+        executes in dependency order; <strong>Run ↓</strong> re-runs a cell and
+        everything that depends on it. Code execution requires{" "}
+        <code>GAUSS_JUPYTER_ENABLED</code> and a running Jupyter Server.
       </p>
 
       {error && <p className="app__error">{error}</p>}

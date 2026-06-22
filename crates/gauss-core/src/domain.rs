@@ -347,6 +347,9 @@ pub struct Dashboard {
 ///   run and injected exactly like a `Sql` cell.
 /// - `Input` — a named variable (text/number) injected into the kernel, so
 ///   changing it and re-running downstream cells recomputes results.
+/// - `Chart` — a nivo visualization of a kernel `DataFrame` (named by
+///   `input_var`); the rows are fetched and rendered in the web UI.
+/// - `BigNumber` — a single headline value taken from a kernel `DataFrame`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CellKind {
@@ -355,6 +358,8 @@ pub enum CellKind {
     Sql,
     Nl2sql,
     Input,
+    Chart,
+    BigNumber,
 }
 
 /// One cell of a notebook. `source` carries the cell's primary text — code,

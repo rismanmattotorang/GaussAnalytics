@@ -681,6 +681,52 @@ fn inject_value_code(var: &str, raw: &str) -> String {
     )
 }
 
+/// Python that serializes a kernel `DataFrame` (`var`) to a compact JSON
+/// `{columns, rows}` on stdout, for the web UI to chart with nivo. Uses pandas'
+/// own `to_json` so NaN/None and numpy dtypes serialize cleanly.
+fn fetch_dataframe_code(var: &str) -> String {
+    let mut s = String::new();
+    s.push_str("import json as _json\n");
+    s.push_str(&format!("_df = {var}\n"));
+    s.push_str(
+        "_payload = {'columns': [str(_c) for _c in _df.columns], \
+         'rows': _json.loads(_df.to_json(orient='values'))}\n",
+    );
+    s.push_str("print(_json.dumps(_payload))");
+    s
+}
+
+/// Parse one `{columns, rows}` JSON document into a query result.
+fn parse_df_json(text: &str) -> Option<gauss_drivers::QueryResult> {
+    let v: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
+    let columns = v
+        .get("columns")?
+        .as_array()?
+        .iter()
+        .filter_map(|c| c.as_str().map(String::from))
+        .collect();
+    let rows = v
+        .get("rows")?
+        .as_array()?
+        .iter()
+        .filter_map(|r| r.as_array().cloned())
+        .collect();
+    Some(gauss_drivers::QueryResult { columns, rows })
+}
+
+/// Find the DataFrame JSON a chart/big-number fetch printed to stdout (the last
+/// stdout line wins, in case earlier cells printed too).
+fn parse_dataframe_outputs(
+    outputs: &[gauss_notebook::CellOutput],
+) -> Option<gauss_drivers::QueryResult> {
+    outputs.iter().rev().find_map(|o| match o {
+        gauss_notebook::CellOutput::Stream { name, text } if name == "stdout" => {
+            parse_df_json(text)
+        }
+        _ => None,
+    })
+}
+
 /// Execute a notebook cell on its kernel (starting one on first use) and return
 /// the collected outputs. Behavior by kind:
 /// - **Python** runs the source as code.
@@ -741,8 +787,107 @@ pub async fn notebook_run(
             resp.sql = Some(sql);
             resp.preview = Some(result);
         }
+        CellKind::Chart | CellKind::BigNumber => {
+            // Fetch the referenced DataFrame from the kernel; the web UI renders
+            // it (nivo chart / headline number). Kernel errors (e.g. the var is
+            // undefined) surface as outputs instead of a preview.
+            let var = valid_ident(cell.input_var.as_deref().unwrap_or("df"))?;
+            let code = fetch_dataframe_code(&var);
+            let outputs = gw.execute_collect(&kernel_id, &code).await?;
+            match parse_dataframe_outputs(&outputs) {
+                Some(preview) => resp.preview = Some(preview),
+                None => resp.outputs = outputs,
+            }
+        }
     }
     Ok(Json(resp))
+}
+
+// --- Reactive run order (dependency DAG) ---------------------------------
+
+#[derive(Deserialize)]
+pub struct RunOrderRequest {
+    /// The notebook's current cells (possibly unsaved edits).
+    pub cells: Vec<NotebookCell>,
+    /// When set, return only this cell and its transitive dependents (the
+    /// minimal re-run after an edit); otherwise return a full run order.
+    #[serde(default)]
+    pub changed: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+pub struct RunOrderResponse {
+    /// Cell ids in a safe execution order (Markdown cells included; the client
+    /// skips them). Empty `changed` cell or a cycle yields a 400.
+    pub order: Vec<Uuid>,
+}
+
+/// Reduce a notebook cell to its data dependencies for the reactive DAG.
+fn cell_spec(cell: &NotebookCell) -> gauss_notebook::dag::CellSpec {
+    use gauss_notebook::dag::{analyze_python, CellSpec};
+    let var_or_df = |v: &Option<String>| {
+        v.clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "df".to_string())
+    };
+    match cell.kind {
+        CellKind::Python => {
+            let (defines, uses) = analyze_python(&cell.source);
+            CellSpec {
+                id: cell.id,
+                defines,
+                uses,
+            }
+        }
+        CellKind::Sql | CellKind::Nl2sql => CellSpec {
+            id: cell.id,
+            defines: vec![var_or_df(&cell.output_var)],
+            uses: vec![],
+        },
+        CellKind::Input => CellSpec {
+            id: cell.id,
+            defines: cell
+                .input_var
+                .clone()
+                .filter(|s| !s.is_empty())
+                .into_iter()
+                .collect(),
+            uses: vec![],
+        },
+        CellKind::Chart | CellKind::BigNumber => CellSpec {
+            id: cell.id,
+            defines: vec![],
+            uses: vec![var_or_df(&cell.input_var)],
+        },
+        CellKind::Markdown => CellSpec {
+            id: cell.id,
+            defines: vec![],
+            uses: vec![],
+        },
+    }
+}
+
+/// Compute a reactive run order over the notebook's cells. With `changed` set,
+/// returns the minimal downstream set to re-run; otherwise a full topological
+/// order. A dependency cycle is a 400 (`InvalidQuery`).
+pub async fn notebook_run_order(
+    State(st): State<AppState>,
+    Path(_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<RunOrderRequest>,
+) -> Result<Json<RunOrderResponse>, ApiError> {
+    require_create(&st, &headers).await?;
+    let specs: Vec<_> = req.cells.iter().map(cell_spec).collect();
+    let order = match req.changed {
+        Some(changed) => {
+            // Validate acyclicity first so a cycle is reported, not silently
+            // collapsed to an empty downstream set.
+            gauss_notebook::dag::topo_order(&specs)?;
+            gauss_notebook::dag::downstream(&specs, changed)
+        }
+        None => gauss_notebook::dag::topo_order(&specs)?,
+    };
+    Ok(Json(RunOrderResponse { order }))
 }
 
 // --- Export / import -----------------------------------------------------
@@ -1008,5 +1153,56 @@ mod notebook_codegen_tests {
         assert_eq!(parse_input_value("hello"), serde_json::json!("hello"));
         let code = inject_value_code("threshold", "10");
         assert!(code.contains("threshold = _json.loads"));
+    }
+
+    #[test]
+    fn dataframe_fetch_round_trips_via_stdout_json() {
+        // The fetch prints a {columns, rows} document; the parser reconstructs it.
+        let code = fetch_dataframe_code("sales");
+        assert!(code.contains("_df = sales"));
+        assert!(code.contains("print(_json.dumps(_payload))"));
+        let printed = r#"{"columns":["region","total"],"rows":[["west",10],["east",20]]}"#;
+        let outputs = vec![gauss_notebook::CellOutput::Stream {
+            name: "stdout".into(),
+            text: format!("{printed}\n"),
+        }];
+        let result = parse_dataframe_outputs(&outputs).expect("parsed");
+        assert_eq!(result.columns, vec!["region", "total"]);
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[1][0], serde_json::json!("east"));
+    }
+
+    #[test]
+    fn cell_spec_maps_kinds_to_dependencies() {
+        let mk = |kind, source: &str, output_var: Option<&str>, input_var: Option<&str>| {
+            cell_spec(&NotebookCell {
+                id: Uuid::new_v4(),
+                kind,
+                source: source.into(),
+                database_id: None,
+                output_var: output_var.map(String::from),
+                input_var: input_var.map(String::from),
+            })
+        };
+        // A SQL cell defines its output var; a chart cell uses one.
+        let sql = mk(CellKind::Sql, "select 1", Some("orders"), None);
+        assert_eq!(sql.defines, vec!["orders"]);
+        assert!(sql.uses.is_empty());
+        let chart = mk(CellKind::Chart, "", None, Some("orders"));
+        assert!(chart.defines.is_empty());
+        assert_eq!(chart.uses, vec!["orders"]);
+        // An input cell defines its variable.
+        let input = mk(CellKind::Input, "10", None, Some("threshold"));
+        assert_eq!(input.defines, vec!["threshold"]);
+        // A python cell is analyzed heuristically.
+        let py = mk(CellKind::Python, "summary = orders.sum()", None, None);
+        assert!(py.defines.contains(&"summary".to_string()));
+        assert!(py.uses.contains(&"orders".to_string()));
+
+        // End to end: chart depends on the sql cell that defines `orders`.
+        let specs = vec![chart.clone(), sql.clone()];
+        let order = gauss_notebook::dag::topo_order(&specs).unwrap();
+        let pos = |id| order.iter().position(|x| *x == id).unwrap();
+        assert!(pos(sql.id) < pos(chart.id));
     }
 }
