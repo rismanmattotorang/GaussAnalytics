@@ -7,9 +7,13 @@ vi.mock("../api/client", () => ({
   api: {
     notebooks: vi.fn(),
     dashboards: vi.fn(),
+    notebookCapabilities: vi.fn(),
     runCell: vi.fn(),
     runOrder: vi.fn(),
     publishCell: vi.fn(),
+    assistNotebook: vi.fn(),
+    exportNotebook: vi.fn(),
+    importNotebook: vi.fn(),
     startKernel: vi.fn(),
     stopKernel: vi.fn(),
     updateNotebook: vi.fn(),
@@ -32,6 +36,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   (api.notebooks as ReturnType<typeof vi.fn>).mockResolvedValue([sample]);
   (api.dashboards as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  (api.notebookCapabilities as ReturnType<typeof vi.fn>).mockResolvedValue({
+    enabled: false,
+    mode: "local",
+  });
 });
 
 afterEach(cleanup);
@@ -166,6 +174,27 @@ describe("Notebooks", () => {
         expect.objectContaining({ cell_id: "c2", dashboard_id: "d1" }),
         "admin",
       ),
+    );
+  });
+
+  it("asks the AI assistant and appends the proposed cell", async () => {
+    (api.assistNotebook as ReturnType<typeof vi.fn>).mockResolvedValue({
+      cell: { id: "ai1", kind: "python", source: "# drafted by AI" },
+      note: "Python starter cell.",
+    });
+    render(<Notebooks token="admin" databases={[]} />);
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+
+    fireEvent.change(screen.getByRole("textbox", { name: "ask ai" }), {
+      target: { value: "summarize revenue" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    await waitFor(() => expect(screen.getByDisplayValue("# drafted by AI")).toBeTruthy());
+    expect(api.assistNotebook).toHaveBeenCalledWith(
+      "nb-1",
+      expect.objectContaining({ prompt: "summarize revenue" }),
+      "admin",
     );
   });
 });

@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** N0–N4 delivered · N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** ✅ N0–N5 delivered (initiative complete) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -165,9 +165,18 @@ permissions/`CreateContent`, and appear in export/import.
   dashboard tiles backed by **arbitrary computed Python/ML results** — something the
   reference platform cannot do (see `docs/COMPARISON.md`). Editor updates preserve
   pinned notebook cards.
-- **N5 — Interop & scale:** `.ipynb` import/export (`@deepnote/convert`); in-notebook
-  **AI agent** (reuse `gauss-engine` + tools); optional **server-side sandboxed
-  kernels** (containers) for hosted/multi-user deployments.
+- **N5 — Interop & scale ✅ delivered:** **`.ipynb` import/export** (nbformat v4) lives
+  in `gauss-notebook::nbformat` — Markdown/Python map directly and GaussAnalytics cell
+  kinds (SQL/NL2SQL/Input/Chart/Big Number) round-trip via a `#%gauss …` marker comment,
+  so files stay valid Jupyter notebooks; exposed as `GET /api/notebooks/{id}/export` and
+  `POST /api/notebooks/import` with download/upload in the UI. The **in-notebook AI
+  assistant** (`POST /api/notebooks/{id}/assist`) proposes a cell from a prompt, reusing
+  the **governed** NL2SQL pipeline for guardrailed SQL (against a chosen source) and
+  otherwise a Python starter — no ungoverned codegen path. **Scale:** a `mode`
+  (`local` | `managed`) declares the execution model and is surfaced to the UI; `managed`
+  means the operator points GaussAnalytics at a **sandboxed Jupyter host they provision**
+  (the gateway speaks the same REST/WS API either way), keeping GaussAnalytics' "no
+  arbitrary code in our process" posture for hosted/multi-user deployments.
 
 Each phase ends green under the existing bar: `cargo fmt`/`clippy -D warnings`/
 `cargo test`, frontend typecheck+test+build, tests for new behavior, and docs.

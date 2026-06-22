@@ -6,6 +6,8 @@
 //! `CreateContent` permission; export is available to any authenticated
 //! principal; import is admin-only.
 
+use std::collections::{HashMap, HashSet};
+
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::Json;
@@ -907,21 +909,36 @@ async fn snapshot_cell(
     notebook: &Notebook,
     cell_id: Uuid,
 ) -> Result<String, ApiError> {
+    snapshot_cells(st, headers, notebook, &[cell_id])
+        .await?
+        .remove(&cell_id)
+        .ok_or_else(|| CoreError::NotFound(format!("cell {cell_id}")).into())
+}
+
+/// Run the notebook **once** in dependency order and snapshot every requested
+/// cell from that single run. This is what lets a dashboard with several cards
+/// from the same notebook refresh with one execution instead of one per card.
+async fn snapshot_cells(
+    st: &AppState,
+    headers: &HeaderMap,
+    notebook: &Notebook,
+    targets: &[Uuid],
+) -> Result<HashMap<Uuid, String>, ApiError> {
     let gw = st.kernel_gateway()?;
     let kernel_id = ensure_kernel(st, notebook.id).await?;
+    let want: HashSet<Uuid> = targets.iter().copied().collect();
     let specs: Vec<_> = notebook.cells.iter().map(cell_spec).collect();
     let order = gauss_notebook::dag::topo_order(&specs)?;
-    let mut target: Option<CellRun> = None;
+    let mut out = HashMap::new();
     for id in order {
         if let Some(cell) = notebook.cells.iter().find(|c| c.id == id) {
             let run = execute_cell(st, headers, gw.as_ref(), &kernel_id, cell).await?;
-            if cell.id == cell_id {
-                target = Some(run);
+            if want.contains(&cell.id) {
+                out.insert(cell.id, build_snapshot(&run));
             }
         }
     }
-    let run = target.ok_or_else(|| CoreError::NotFound(format!("cell {cell_id}")))?;
-    Ok(build_snapshot(&run))
+    Ok(out)
 }
 
 #[derive(Deserialize)]
@@ -1000,19 +1017,31 @@ pub(crate) async fn refresh_dashboard_notebooks(
     if dash.notebook_cards.is_empty() {
         return Ok(0);
     }
+
+    // Group the cards' target cells by notebook so each notebook runs once, no
+    // matter how many of its cells are pinned on this dashboard.
+    let mut targets: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for c in &dash.notebook_cards {
+        targets.entry(c.notebook_id).or_default().push(c.cell_id);
+    }
+    let mut snapshots: HashMap<(Uuid, Uuid), String> = HashMap::new();
+    for (nb_id, cell_ids) in &targets {
+        let Ok(notebook) = load_notebook(st, *nb_id).await else {
+            continue; // a deleted notebook leaves its stale snapshot in place
+        };
+        if let Ok(map) = snapshot_cells(st, headers, &notebook, cell_ids).await {
+            for (cid, snap) in map {
+                snapshots.insert((*nb_id, cid), snap);
+            }
+        }
+    }
+
     let now = Utc::now();
     let mut refreshed = 0;
-    for i in 0..dash.notebook_cards.len() {
-        let (nb_id, cell_id) = (
-            dash.notebook_cards[i].notebook_id,
-            dash.notebook_cards[i].cell_id,
-        );
-        let Ok(notebook) = load_notebook(st, nb_id).await else {
-            continue;
-        };
-        if let Ok(snapshot) = snapshot_cell(st, headers, &notebook, cell_id).await {
-            dash.notebook_cards[i].snapshot = Some(snapshot);
-            dash.notebook_cards[i].refreshed_at = Some(now);
+    for card in &mut dash.notebook_cards {
+        if let Some(snap) = snapshots.get(&(card.notebook_id, card.cell_id)) {
+            card.snapshot = Some(snap.clone());
+            card.refreshed_at = Some(now);
             refreshed += 1;
         }
     }
@@ -1031,6 +1060,144 @@ pub async fn refresh_dashboard(
     require_create(&st, &headers).await?;
     let refreshed = refresh_dashboard_notebooks(&st, &headers, id).await?;
     Ok(Json(serde_json::json!({ "refreshed": refreshed })))
+}
+
+// --- Interop (.ipynb), AI assist, and capabilities -----------------------
+
+/// Export a notebook as a Jupyter `.ipynb` (nbformat v4) document.
+pub async fn export_notebook_ipynb(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let nb = load_notebook(&st, id).await?;
+    Ok(Json(gauss_notebook::nbformat::export_ipynb(&nb)))
+}
+
+#[derive(Deserialize)]
+pub struct ImportNotebookRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    /// A Jupyter `.ipynb` document.
+    pub ipynb: serde_json::Value,
+}
+
+/// Create a notebook from an uploaded `.ipynb` document.
+pub async fn import_notebook_ipynb(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ImportNotebookRequest>,
+) -> Result<Json<Notebook>, ApiError> {
+    require_create(&st, &headers).await?;
+    let cells = gauss_notebook::nbformat::import_cells(&req.ipynb)?;
+    let name = req
+        .name
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            req.ipynb
+                .pointer("/metadata/gauss/name")
+                .and_then(|n| n.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "Imported notebook".into());
+    let nb = Notebook {
+        id: Uuid::new_v4(),
+        name,
+        collection_id: None,
+        cells,
+        created_at: Utc::now(),
+    };
+    persist_notebook(&st, &nb).await?;
+    Ok(Json(nb))
+}
+
+#[derive(Deserialize)]
+pub struct AssistRequest {
+    pub prompt: String,
+    #[serde(default)]
+    pub database_id: Option<Uuid>,
+}
+
+#[derive(Serialize)]
+pub struct AssistResponse {
+    /// A proposed cell to insert (the client appends/edits it).
+    pub cell: NotebookCell,
+    /// A human-readable note about what was proposed.
+    pub note: String,
+}
+
+/// Propose a notebook cell for a natural-language prompt — the in-notebook AI
+/// assistant. When a data source is selected and NL2SQL is enabled, this reuses
+/// the **governed** translation pipeline to propose a guardrailed SQL cell;
+/// otherwise it proposes a Python starter cell. No ungoverned codegen path.
+pub async fn notebook_assist(
+    State(st): State<AppState>,
+    Path(_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<AssistRequest>,
+) -> Result<Json<AssistResponse>, ApiError> {
+    require_create(&st, &headers).await?;
+
+    if let Some(db_id) = req.database_id {
+        if st.nl2sql_pipeline().is_some() {
+            let guarded =
+                crate::translate_to_sql(&st, db_id, req.prompt.clone(), Vec::new()).await?;
+            let note = guarded
+                .explanation
+                .clone()
+                .filter(|e| !e.is_empty())
+                .unwrap_or_else(|| "Generated guardrailed SQL from your prompt.".into());
+            return Ok(Json(AssistResponse {
+                cell: NotebookCell {
+                    id: Uuid::new_v4(),
+                    kind: CellKind::Sql,
+                    source: guarded.sql,
+                    database_id: Some(db_id),
+                    output_var: Some("df".into()),
+                    input_var: None,
+                },
+                note,
+            }));
+        }
+    }
+
+    // Fallback: a Python starter scaffolding the request (no LLM required).
+    let prompt = req.prompt.replace('\n', " ");
+    let source = format!("# {prompt}\n# TODO: implement with pandas / your local libraries\n");
+    Ok(Json(AssistResponse {
+        cell: NotebookCell {
+            id: Uuid::new_v4(),
+            kind: CellKind::Python,
+            source,
+            database_id: None,
+            output_var: None,
+            input_var: None,
+        },
+        note: "Select a data source with NL2SQL enabled for SQL; proposed a Python starter cell."
+            .into(),
+    }))
+}
+
+#[derive(Serialize)]
+pub struct NotebookCapabilities {
+    /// Whether the notebook integration is enabled.
+    pub enabled: bool,
+    /// Execution model the operator declared: `local` (the user's own Jupyter)
+    /// or `managed` (GaussAnalytics points at a sandboxed Jupyter host the
+    /// operator provisions — isolation is enforced by that host, not here).
+    /// Normalized to lower-case; anything unrecognized is reported as `local`.
+    pub mode: String,
+}
+
+/// Report the notebook execution capabilities so the UI can message correctly.
+pub async fn notebook_capabilities(State(st): State<AppState>) -> Json<NotebookCapabilities> {
+    let mode = match st.config.jupyter.mode.trim().to_ascii_lowercase().as_str() {
+        "managed" => "managed",
+        _ => "local",
+    };
+    Json(NotebookCapabilities {
+        enabled: st.config.jupyter.enabled,
+        mode: mode.to_string(),
+    })
 }
 
 // --- Reactive run order (dependency DAG) ---------------------------------

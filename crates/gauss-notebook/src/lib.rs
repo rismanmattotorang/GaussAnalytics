@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub mod dag;
+pub mod nbformat;
 
 use futures::{SinkExt, StreamExt};
 use gauss_core::error::{CoreError, CoreResult};

@@ -82,10 +82,16 @@ pub struct McpConfig {
 pub struct JupyterConfig {
     /// Whether the notebook integration is enabled.
     pub enabled: bool,
-    /// Base URL of the local Jupyter Server (e.g. `http://127.0.0.1:8888`).
+    /// Base URL of the Jupyter Server (e.g. `http://127.0.0.1:8888`).
     pub url: String,
     /// Jupyter Server token (empty for token-less local servers).
     pub token: String,
+    /// Execution model: `local` (the user's own Jupyter) or `managed` (an
+    /// operator-provisioned **sandboxed** Jupyter host with resource and egress
+    /// limits, for hosted/multi-user deployments). Both speak the same REST/WS
+    /// API; the mode only documents the trust model and is surfaced to the UI.
+    #[serde(default = "default_jupyter_mode")]
+    pub mode: String,
     /// How often (seconds) to refresh published notebook dashboard cards by
     /// re-running their source notebooks. `0` disables scheduled refresh (cards
     /// still refresh on publish and via the manual refresh endpoint).
@@ -154,6 +160,7 @@ impl Default for AppConfig {
                 enabled: false,
                 url: "http://127.0.0.1:8888".into(),
                 token: String::new(),
+                mode: default_jupyter_mode(),
                 refresh_secs: 0,
             },
         }
@@ -248,6 +255,9 @@ impl AppConfig {
         if let Some(v) = get("GAUSS_JUPYTER_TOKEN") {
             cfg.jupyter.token = v;
         }
+        if let Some(v) = get("GAUSS_JUPYTER_MODE") {
+            cfg.jupyter.mode = v;
+        }
         if let Some(v) = get("GAUSS_JUPYTER_REFRESH_SECS") {
             cfg.jupyter.refresh_secs = parse(&v, "GAUSS_JUPYTER_REFRESH_SECS")?;
         }
@@ -259,6 +269,10 @@ impl AppConfig {
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
     }
+}
+
+fn default_jupyter_mode() -> String {
+    "local".to_string()
 }
 
 fn parse<T: std::str::FromStr>(v: &str, key: &str) -> CoreResult<T> {

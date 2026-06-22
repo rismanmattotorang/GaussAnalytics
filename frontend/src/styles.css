@@ -524,6 +524,18 @@ code {
   display: flex;
   gap: 8px;
   margin: 10px 0;
+  align-items: center;
+}
+.notebooks__import {
+  cursor: pointer;
+}
+.notebooks__ai {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.notebooks__ai input {
+  flex: 1;
 }
 .notebooks__list {
   list-style: none;
