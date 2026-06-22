@@ -106,19 +106,33 @@ See [`.env.example`](.env.example) for the full list.
    Web UI (React/TS) ─┐
                       ├─► gauss-server (Rust/axum, HTTP+JSON API)
    Admin TUI ─────────┘        │
-                               ├─ gauss-query   GQL → parameterized SQL
-                               ├─ gauss-db      metadata store
-                               ├─ gauss-auth    sessions · RBAC
-                               ├─ gauss-nl2sql  ─► Gaussian NL2SQL  (integration)
+                               ├─ gauss-query    GQL → parameterized SQL
+                               ├─ gauss-db       metadata store
+                               ├─ gauss-auth     sessions · RBAC
+                               ├─ gauss-nl2sql   in-house NL2SQL (in-process LLM + guardrails)
                                └─ gauss-mcp-gateway ─► Gaussian MCP (integration)
+
+   Conversational chat ─┐
+   Chat Web UI (SSE) ───┼─► gauss-chat / gauss-chat-tui  (in-process agent loop)
+   Chat TUI (ratatui) ──┘        │
+                                 ├─ gauss-engine   agent loop · tools · UI components
+                                 ├─ gauss-tools    run_sql · text_to_sql · visualize · memory
+                                 ├─ gauss-llm      LLM clients (mock/openai/anthropic/ollama/gemini)
+                                 └─ gauss-sql      SQL runners (sqlite/postgres/snowflake)
 ```
 
 - **GQL** is GaussAnalytics' structured query language: the web UI builds it,
   the server validates it against your schema, and the compiler emits
   parameterized SQL per database dialect.
-- **AI is governed.** NL2SQL output and MCP tool calls run through
-  GaussAnalytics' own guardrails — schema grounding, read-only validation,
-  per-user permissions, and a full audit trail — on top of Gaussian's models.
+- **AI is in-house and governed.** The NL2SQL engine runs entirely in-process —
+  no external service, no service credential. Translation drives a configured
+  LLM provider directly; every generated query passes GaussAnalytics' own
+  guardrails (schema grounding, read-only validation, table allowlist, per-user
+  permissions, PII redaction, and a full audit trail).
+- **Two ways to ask.** Beyond the BI web UI, GaussAnalytics ships a
+  conversational **chat web UI** (self-contained, SSE/WebSocket streaming, CSV
+  upload) and a keyboard-driven **chat TUI** — both backed by the same
+  self-correcting agent loop and tools.
 
 Read the [Architecture](docs/ARCHITECTURE.md) and [Strategy](docs/STRATEGY.md)
 for the full picture.
@@ -135,13 +149,55 @@ crates/
   gauss-drivers       data-source drivers (SQLite/Postgres/MySQL): execute · discover · fingerprint
   gauss-scheduler     background job engine (schema refresh, query alerts)
   gauss-mcp-gateway   integration layer → Gaussian MCP Servers
-  gauss-nl2sql        integration layer → Gaussian NL2SQL
+  gauss-nl2sql        in-house NL2SQL: grounding + in-process LLM translation + guardrails
   gauss-server        axum HTTP/JSON API + static web UI hosting
   gauss-tui           Ratatui operator administration console
   gaussctl            CLI: serve | admin | migrate | version
+  -- in-house NL2SQL engine (self-correcting text-to-SQL) --
+  gauss-engine        agent loop · tool registry · models · UI components
+  gauss-semantic      semantic / modeling-definition layer
+  gauss-sqlguard      SQL AST guardrails (read-only · allowlist · LIMIT)
+  gauss-llm           LLM clients (mock/openai/anthropic/ollama/gemini/vllm)
+  gauss-sql           SQL runners (sqlite · postgres · snowflake) + CSV ingest
+  gauss-textsql       self-correcting text-to-SQL pipeline
+  gauss-chart         chart generation (Plotly JSON) from tabular data
+  gauss-tools         built-in agent tools (run_sql · visualize · files · memory)
+  gauss-embed         text-embedding providers (hashing/ollama/openai)
+  gauss-memory        vector-backed agent memory
+  gauss-runtime       shared runtime assembly (LLM selection · demo DB seeding)
+  -- conversational UIs --
+  gauss-chat          conversational web UI: axum SSE/WebSocket chat server + agent runner binary
+  gauss-chat-tui      conversational terminal UI (ratatui) — in-process chat client
 frontend/             React + TypeScript web application
 docs/                 strategy, architecture, roadmap, ADRs
 ```
+
+## Conversational chat (Web UI + TUI)
+
+Alongside the BI web app, GaussAnalytics includes a chat experience driven by an
+in-process agent loop — the same engine, tools, and guardrails, exposed two ways:
+
+```bash
+# Conversational web UI (self-contained HTML, SSE streaming, CSV upload).
+# Defaults to the offline mock LLM and a seeded demo database.
+cargo run -p gauss-chat -- --port 8000
+#   → open http://127.0.0.1:8000
+
+# Pick a provider (reads the provider's own API key from the environment):
+cargo run -p gauss-chat -- --llm openai --model gpt-4o-mini
+# Ground the self-correcting text_to_sql tool in a semantic model:
+cargo run -p gauss-chat -- --semantic-model model.yaml
+
+# Conversational terminal UI:
+cargo run -p gauss-chat-tui -- --llm mock
+#   /load <file.csv> [table]  imports a CSV you can then query in plain English
+```
+
+Both clients stream rich components (text, tables, charts, status, task tracker),
+support multi-turn conversations and CSV upload, and run every query through the
+read-only guardrails. Configuration is via flags or `GAUSS_CHAT_*` environment
+variables (`GAUSS_CHAT_LLM`, `GAUSS_CHAT_MODEL`, `GAUSS_CHAT_DB`,
+`GAUSS_CHAT_PORT`, `GAUSS_CHAT_SEMANTIC_MODEL`, …).
 
 ## Status
 
@@ -153,10 +209,14 @@ middleware, **rotatable API keys**, **signed-token embedding**), data-source
 management, a **scheduler with query alerts**, a **query-result cache**, and now
 the BI core — **saved questions, dashboards, collections, content
 export/import**, and a **web UI** (query builder + table/bar chart + saved
-questions + natural-language Ask). Plus a **differential-testing harness**, a
-**contract-compatibility suite**, an admin **TUI**, a **compile benchmark**
-(~500k queries/sec/core), and a **`cargo deny`** supply-chain policy.
-`cargo test --workspace` is green.
+questions + natural-language Ask). The **NL2SQL engine is now fully in-house** —
+a self-correcting text-to-SQL pipeline (schema linking → few-shot → AST
+guardrails → execution-guided repair → PII redaction) with in-process LLM
+clients and no external service credential — surfaced through a **conversational
+chat web UI** (SSE/WebSocket streaming + CSV upload) and a **chat TUI**. Plus a
+**differential-testing harness**, a **contract-compatibility suite**, an admin
+**TUI**, a **compile benchmark** (~500k queries/sec/core), and a **`cargo deny`**
+supply-chain policy. `cargo test --workspace` is green.
 
 See [**how GaussAnalytics compares**](docs/COMPARISON.md) to the reference
 platform (with an honest list of remaining gaps), and the

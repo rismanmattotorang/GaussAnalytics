@@ -24,6 +24,14 @@ members = [
     "crates/gauss-llm",
     "crates/gauss-sql",
     "crates/gauss-textsql",
+    # Agentic chat UI stack (ported web UI + TUI and their tool/runtime layers).
+    "crates/gauss-chart",
+    "crates/gauss-embed",
+    "crates/gauss-memory",
+    "crates/gauss-tools",
+    "crates/gauss-runtime",
+    "crates/gauss-chat",
+    "crates/gauss-chat-tui",
     "crates/gauss-server",
     "crates/gauss-tui",
     "crates/gaussctl",
@@ -56,6 +64,12 @@ gauss-sqlguard = { path = "crates/gauss-sqlguard" }
 gauss-llm = { path = "crates/gauss-llm" }
 gauss-sql = { path = "crates/gauss-sql" }
 gauss-textsql = { path = "crates/gauss-textsql" }
+gauss-chart = { path = "crates/gauss-chart" }
+gauss-embed = { path = "crates/gauss-embed" }
+gauss-memory = { path = "crates/gauss-memory" }
+gauss-tools = { path = "crates/gauss-tools" }
+gauss-runtime = { path = "crates/gauss-runtime" }
+gauss-chat = { path = "crates/gauss-chat" }
 gauss-server = { path = "crates/gauss-server" }
 gauss-tui = { path = "crates/gauss-tui" }
 
@@ -65,7 +79,7 @@ futures = "0.3"
 async-stream = "0.3"
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "catch-panic", "limit"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Serialization / data

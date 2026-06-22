@@ -167,6 +167,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
+ "base64",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -185,8 +186,10 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
+ "sha1",
  "sync_wrapper",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-layer",
  "tower-service",
@@ -448,6 +451,7 @@ checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
  "bitflags",
  "crossterm_winapi",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix 0.38.44",
@@ -529,6 +533,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "data-encoding"
+version = "2.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "der"
@@ -787,6 +797,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "gauss-chart"
+version = "0.1.0"
+dependencies = [
+ "gauss-engine",
+ "serde_json",
+]
+
+[[package]]
+name = "gauss-chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "futures",
+ "gauss-embed",
+ "gauss-engine",
+ "gauss-llm",
+ "gauss-memory",
+ "gauss-runtime",
+ "gauss-semantic",
+ "gauss-sql",
+ "gauss-textsql",
+ "gauss-tools",
+ "http-body-util",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "gauss-chat-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "futures",
+ "gauss-engine",
+ "gauss-llm",
+ "gauss-runtime",
+ "gauss-sql",
+ "gauss-tools",
+ "ratatui",
+ "rusqlite",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "gauss-config"
 version = "0.1.0"
 dependencies = [
@@ -830,6 +896,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "gauss-embed"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gauss-engine",
+ "reqwest",
+ "serde_json",
  "tokio",
 ]
 
@@ -879,6 +956,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gauss-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "gauss-embed",
+ "gauss-engine",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "gauss-nl2sql"
 version = "0.1.0"
 dependencies = [
@@ -898,6 +989,17 @@ version = "0.1.0"
 dependencies = [
  "gauss-core",
  "serde",
+]
+
+[[package]]
+name = "gauss-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "gauss-engine",
+ "gauss-llm",
+ "rusqlite",
 ]
 
 [[package]]
@@ -986,6 +1088,22 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "gauss-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "csv",
+ "gauss-chart",
+ "gauss-engine",
+ "gauss-sqlguard",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2894,6 +3012,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3029,6 +3159,22 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.9.4",
+ "sha1",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "typenum"
