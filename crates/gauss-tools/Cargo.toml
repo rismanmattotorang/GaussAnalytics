@@ -8,6 +8,7 @@ description = "GaussAnalytics built-in tools"
 [dependencies]
 gauss-engine.workspace = true
 gauss-chart.workspace = true
+gauss-insight.workspace = true
 gauss-sqlguard.workspace = true
 async-trait.workspace = true
 serde = { workspace = true }

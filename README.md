@@ -160,7 +160,8 @@ crates/
   gauss-llm           LLM clients (mock/openai/anthropic/ollama/gemini/vllm)
   gauss-sql           SQL runners (sqlite · postgres · snowflake) + CSV ingest
   gauss-textsql       self-correcting text-to-SQL pipeline
-  gauss-chart         chart generation (Plotly JSON) from tabular data
+  gauss-chart         chart generation: deterministic Vega-Lite recommender + Plotly figures
+  gauss-insight       GenBI result intelligence: chart + summary + grounded follow-ups
   gauss-tools         built-in agent tools (run_sql · visualize · files · memory)
   gauss-embed         text-embedding providers (hashing/ollama/openai)
   gauss-memory        vector-backed agent memory
@@ -198,6 +199,27 @@ support multi-turn conversations and CSV upload, and run every query through the
 read-only guardrails. Configuration is via flags or `GAUSS_CHAT_*` environment
 variables (`GAUSS_CHAT_LLM`, `GAUSS_CHAT_MODEL`, `GAUSS_CHAT_DB`,
 `GAUSS_CHAT_PORT`, `GAUSS_CHAT_SEMANTIC_MODEL`, …).
+
+### Result intelligence (GenBI) — better than WrenAI
+
+Every query result is automatically accompanied by a **GenBI panel**: a
+recommended chart, a plain-language summary, and grounded follow-up questions.
+Inspired by WrenAI's GenBI, but implemented to be strictly better — the whole
+panel is computed in-process from the returned rows, with **no extra LLM
+round-trip**:
+
+| | WrenAI | GaussAnalytics (`gauss-insight` + `gauss-chart`) |
+|---|---|---|
+| Chart selection | extra LLM call → Vega-Lite | **deterministic** from data shape (column kinds + cardinality) |
+| Cost / latency | tokens + a round-trip per chart | **free, instant, reproducible** |
+| Hallucination | LLM can reference columns the query never returned | **structurally impossible** — only real columns are used |
+| Result summary | LLM (can misstate figures) | **computed from the rows** — never misstates a number |
+| Follow-ups | LLM-authored | **grounded** in the actual schema/columns |
+| Rendering | needs the Vega CDN | **inline, no CDN** (air-gap friendly) — Vega-Lite still emitted for interop |
+
+Chart types: number, bar, grouped bar, line, multi-line, pie, scatter (falling
+back to a table when no chart is honest). The panel appears in the chat web UI
+(inline SVG charts + clickable follow-up chips), the TUI, and the JSON API.
 
 ## Status
 

@@ -1,0 +1,13 @@
+[package]
+name = "gauss-insight"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics GenBI layer: deterministic chart recommendation, result summaries, and grounded follow-up suggestions for a query result."
+
+[dependencies]
+gauss-engine.workspace = true
+gauss-chart.workspace = true
+serde_json.workspace = true

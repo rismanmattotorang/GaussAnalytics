@@ -188,6 +188,26 @@ impl RichComponent {
         Self::auto(ComponentType::DataFrame, data)
     }
 
+    /// A dataframe component enriched with a GenBI panel: a recommended chart,
+    /// a plain-language summary, and grounded follow-up questions. `insights` is
+    /// the object `{ summary, suggestions, chart }` (see `gauss-insight`); its
+    /// keys are merged onto the standard dataframe data so renderers can show a
+    /// chart, a summary line, and clickable follow-up chips beside the table.
+    pub fn dataframe_with_insights(
+        records: Vec<Map<String, Value>>,
+        columns: Vec<String>,
+        title: Option<String>,
+        insights: Value,
+    ) -> Self {
+        let mut component = Self::dataframe(records, columns, title);
+        if let Value::Object(obj) = insights {
+            for (k, v) in obj {
+                component.data.insert(k, v);
+            }
+        }
+        component
+    }
+
     /// A chart component. `data` is a renderer-ready spec (e.g. a Plotly figure).
     pub fn chart(chart_type: impl Into<String>, data: Value, title: Option<String>) -> Self {
         let mut d = Map::new();

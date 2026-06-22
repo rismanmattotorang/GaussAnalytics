@@ -101,10 +101,15 @@ impl Tool for RunSqlTool {
                     df.to_csv().trim_end().to_string()
                 };
 
-                let component = UiComponent::new(RichComponent::dataframe(
+                // GenBI panel: a recommended chart, a deterministic summary, and
+                // grounded follow-ups — computed from the rows, no extra LLM call.
+                let insights = gauss_insight::analyze(&df, Some("Query Results"));
+                let summary = insights.summary.clone();
+                let component = UiComponent::new(RichComponent::dataframe_with_insights(
                     df.to_records(),
                     columns.clone(),
                     Some("Query Results".to_string()),
+                    insights.to_json(),
                 ));
 
                 // Optionally persist as CSV for downstream tools (e.g. visualize_data).
@@ -128,7 +133,7 @@ impl Tool for RunSqlTool {
                 }
 
                 ToolResult::success(format!(
-                    "Query returned {row_count} row(s) with columns [{}].\n{llm_view}{saved_note}",
+                    "Query returned {row_count} row(s) with columns [{}].\nSummary: {summary}\n{llm_view}{saved_note}",
                     columns.join(", ")
                 ))
                 .with_ui(component)

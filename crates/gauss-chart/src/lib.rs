@@ -10,6 +10,9 @@
 use gauss_engine::dataframe::DataFrame;
 use serde_json::{json, Value};
 
+pub mod recommend;
+pub use recommend::{column_kinds, measure_columns, recommend, ChartRecommendation, ColumnKind};
+
 /// A generated chart: the Plotly `chart_type` and the figure spec.
 pub struct Chart {
     pub chart_type: String,

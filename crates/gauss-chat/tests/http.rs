@@ -65,7 +65,24 @@ async fn chat_poll_returns_chunks() {
     assert!(v["total_chunks"].as_u64().unwrap() > 0);
     // A dataframe component must be present (run_sql executed the query).
     let chunks = v["chunks"].as_array().unwrap();
-    assert!(chunks.iter().any(|c| c["rich"]["type"] == "dataframe"));
+    let df = chunks
+        .iter()
+        .find(|c| c["rich"]["type"] == "dataframe")
+        .expect("a dataframe component");
+    // GenBI enrichment travels with the dataframe: a deterministic summary,
+    // a recommended chart grounded in real columns, and follow-up suggestions.
+    assert!(
+        df["rich"]["data"]["summary"].is_string(),
+        "dataframe should carry a GenBI summary: {df}"
+    );
+    assert!(
+        df["rich"]["data"]["chart"].is_object(),
+        "expected a recommended chart"
+    );
+    assert!(
+        df["rich"]["data"]["suggestions"].is_array(),
+        "expected follow-up suggestions"
+    );
     // Every chunk echoes the conversation/request ids and a timestamp.
     assert!(chunks[0]["conversation_id"].is_string());
 }
