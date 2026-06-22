@@ -434,3 +434,52 @@ code {
   padding: 0.1rem 0.35rem;
   border-radius: 6px;
 }
+
+/* Data-source management + settings (admin pages). */
+.ds-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  max-width: 720px;
+  margin-top: 8px;
+}
+.ds-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted, #98a2b3);
+}
+.ds-form__uri {
+  grid-column: 1 / -1;
+}
+.ds-form__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+}
+.ds-ok {
+  grid-column: 1 / -1;
+  color: #34d399;
+  font-size: 0.85rem;
+}
+.ds-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ds-chips .badge[data-active="true"] {
+  outline: 2px solid #38bdf8;
+}
+.settings__env {
+  background: #0b0d13;
+  border: 1px solid #29313f;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  white-space: pre;
+}
+.datasources .data-table button.link {
+  margin-right: 10px;
+}

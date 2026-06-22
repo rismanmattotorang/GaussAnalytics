@@ -20,7 +20,7 @@ use axum::extract::{Path, Query as HttpQuery, Request, State};
 use axum::http::HeaderMap;
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use gauss_auth::Permission;
@@ -64,8 +64,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api-keys", get(list_api_keys).post(create_api_key))
         .route("/api-keys/{id}/revoke", post(revoke_api_key))
         .route("/databases", get(list_databases).post(create_database))
+        .route("/databases/test", post(test_connection))
+        .route("/databases/{id}", delete(delete_database))
         .route("/databases/{id}/sync", post(sync_database))
         .route("/databases/{id}/tables", get(list_database_tables))
+        .route("/settings/ai", get(ai_settings))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
         .route("/dataset/native", post(native_dataset))
@@ -480,6 +483,86 @@ async fn list_database_tables(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Table>>, ApiError> {
     Ok(Json(st.store.list_tables(id).await?))
+}
+
+/// Delete a data source and its discovered tables (admin only).
+async fn delete_database(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_admin(&st, &headers).await?;
+    st.store
+        .database_by_id(id)
+        .await?
+        .ok_or_else(|| CoreError::NotFound(format!("database {id}")))?;
+    st.store.delete_database(id).await?;
+    Ok(Json(serde_json::json!({ "deleted": id })))
+}
+
+#[derive(Deserialize)]
+struct TestConnectionRequest {
+    kind: DataSourceKind,
+    connection_uri: String,
+}
+
+#[derive(Serialize)]
+struct TestConnectionResponse {
+    ok: bool,
+    /// Number of tables discovered on a successful probe.
+    table_count: usize,
+}
+
+/// Probe a candidate connection without persisting anything (admin only):
+/// connect with the given kind/URI and introspect the schema. Surfaces driver
+/// errors to the UI so operators can fix a connection string before saving.
+async fn test_connection(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<TestConnectionRequest>,
+) -> Result<Json<TestConnectionResponse>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let driver = gauss_drivers::connect(req.kind, &req.connection_uri).await?;
+    let tables = driver.sync_schema().await?;
+    Ok(Json(TestConnectionResponse {
+        ok: true,
+        table_count: tables.len(),
+    }))
+}
+
+#[derive(Serialize)]
+struct AiSettingsResponse {
+    /// Whether the in-house NL2SQL engine is enabled.
+    enabled: bool,
+    /// The configured LLM provider driving translation.
+    provider: String,
+    /// The configured model identifier (may be empty).
+    model: String,
+    /// Optional base-URL override (OpenAI-compatible / self-hosted endpoints).
+    base_url: String,
+    /// Whether a provider API key is configured (the key itself is never
+    /// returned).
+    has_api_key: bool,
+    /// The providers this build can drive.
+    supported_providers: Vec<&'static str>,
+}
+
+/// Report the current AI/NL2SQL configuration (admin only). Secrets are
+/// redacted: only whether a key is set is returned, never the key.
+async fn ai_settings(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AiSettingsResponse>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let c = &st.config.nl2sql;
+    Ok(Json(AiSettingsResponse {
+        enabled: c.enabled,
+        provider: c.provider.clone(),
+        model: c.model.clone(),
+        base_url: c.base_url.clone(),
+        has_api_key: !c.api_key.is_empty(),
+        supported_providers: state::NL2SQL_PROVIDERS.to_vec(),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,6 +1231,98 @@ mod tests {
         let me = auth_me(State(st), bearer(&login.0.token)).await.unwrap();
         assert_eq!(me.0.email, "admin@example.com");
         assert!(me.0.is_admin);
+    }
+
+    #[tokio::test]
+    async fn admin_manages_data_sources_and_reads_ai_settings() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Probe a live (in-memory) SQLite connection without persisting it.
+        let probe = test_connection(
+            State(st.clone()),
+            hdr.clone(),
+            Json(TestConnectionRequest {
+                kind: DataSourceKind::Sqlite,
+                connection_uri: "sqlite::memory:".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(probe.0.ok);
+
+        // Create then delete a data source; the list shrinks by one.
+        let created = create_database(
+            State(st.clone()),
+            hdr.clone(),
+            Json(CreateDatabaseRequest {
+                name: "Temp".into(),
+                kind: DataSourceKind::Sqlite,
+                connection_uri: Some("sqlite::memory:".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        let before = list_databases(State(st.clone())).await.unwrap().0.len();
+        let deleted = delete_database(State(st.clone()), Path(created.0.id), hdr.clone())
+            .await
+            .unwrap();
+        assert_eq!(deleted.0["deleted"], created.0.id.to_string());
+        let after = list_databases(State(st.clone())).await.unwrap().0.len();
+        assert_eq!(after, before - 1);
+
+        // AI settings expose the configured provider and the supported set
+        // (including the OpenAI-compatible gateways), with the key redacted.
+        let ai = ai_settings(State(st.clone()), hdr).await.unwrap();
+        assert!(ai.0.supported_providers.contains(&"openrouter"));
+        assert!(ai.0.supported_providers.contains(&"litellm"));
+        assert!(ai.0.supported_providers.contains(&"vllm"));
+        assert!(ai.0.supported_providers.contains(&"bedrock"));
+        assert!(!ai.0.has_api_key);
+    }
+
+    #[tokio::test]
+    async fn non_admin_cannot_delete_or_test_data_sources() {
+        let (st, db_id) = test_state().await;
+        let hash = gauss_auth::hash_password("viewerpass12").unwrap();
+        st.store
+            .create_user(
+                User {
+                    id: Uuid::new_v4(),
+                    email: "viewer@example.com".into(),
+                    display_name: "Viewer".into(),
+                    is_admin: false,
+                    created_at: Utc::now(),
+                },
+                hash,
+            )
+            .await
+            .unwrap();
+        let login = auth::login(&st, "viewer@example.com", "viewerpass12")
+            .await
+            .unwrap();
+
+        assert!(
+            delete_database(State(st.clone()), Path(db_id), bearer(&login.token))
+                .await
+                .is_err()
+        );
+        assert!(test_connection(
+            State(st),
+            bearer(&login.token),
+            Json(TestConnectionRequest {
+                kind: DataSourceKind::Sqlite,
+                connection_uri: "sqlite::memory:".into(),
+            }),
+        )
+        .await
+        .is_err());
     }
 
     #[tokio::test]

@@ -161,6 +161,26 @@ A kind's name is a single canonical string (`"sqlite"`, `"oracle"`, …) shared 
 the API, the metadata store, and the frontend, so they can never disagree. Every
 value a user supplies is a **bound parameter** — never SQL text — on all engines.
 
+**Managing sources.** Admins manage connections from the web app's **Data
+sources** page (and the admin TUI's *Databases* tab): add a source by kind +
+connection URI, **Test** the connection before saving, **Sync** its schema, and
+**Delete** it. The API surface is `GET/POST /api/databases`,
+`POST /api/databases/test`, `POST /api/databases/{id}/sync`, and
+`DELETE /api/databases/{id}` (admin-only).
+
+### LLM providers
+
+The NL2SQL engine drives a configured provider in-process. The **Settings** page
+shows the live configuration (key redacted) and the supported providers:
+
+| Provider | Notes |
+|---|---|
+| `openai`, `anthropic`, `gemini`, `ollama` | first-class clients |
+| `openrouter` | OpenAI-compatible; built-in default endpoint |
+| `litellm`, `vllm` | OpenAI-compatible; set `GAUSS_NL2SQL_BASE_URL` to the endpoint |
+| `bedrock` | via a LiteLLM / OpenAI-compatible gateway (`base_url`) |
+| `mock` | deterministic, offline (default; no credentials) |
+
 ## Project layout
 
 ```
@@ -264,6 +284,28 @@ cacheable bundle so the app shell stays small. Chart wrappers live in
 `frontend/src/components/charts/NivoCharts.tsx` and consume the pure data
 helpers in `frontend/src/lib/viz.ts`, keeping the rest of the app decoupled
 from the charting library.
+
+### Dashboards (Metabase parity)
+
+GaussAnalytics implements the BI loop end to end — **connect → explore/ask →
+save → dashboard → share → alert → export** — covering Metabase's core surface:
+
+| Capability | Status |
+|---|---|
+| Query builder (structured) + native SQL | ✅ GQL builder + `/dataset/native` |
+| Saved questions, collections | ✅ cards + collections |
+| Reusable metrics | ✅ `/metrics` |
+| Dashboards: cards, parameters/filters, layout, tabs | ✅ |
+| Click-to-cross-filter (drill) | ✅ chart/table click → dashboard params |
+| Auto-refresh, dashboard links | ✅ |
+| Permissions + **row-level security** | ✅ grants + RLS policies |
+| Public/embedded sharing | ✅ signed embedding tokens |
+| Schema sync, fingerprinting, semantic types | ✅ |
+| Alerts / subscriptions | ◐ scheduler + query alerts (email delivery pending) |
+| Natural-language **Ask (NL2SQL)** | ✅ (beyond Metabase) |
+
+The honest gaps (e-mailed subscriptions, dashboard text/markdown cards, deeper
+drill-through configuration) are tracked in [docs/COMPARISON.md](docs/COMPARISON.md).
 
 ## Status
 

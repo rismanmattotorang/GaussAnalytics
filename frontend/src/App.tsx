@@ -5,8 +5,10 @@ import { SavedQuestions } from "./components/SavedQuestions";
 import { Dashboards } from "./components/Dashboards";
 import { NativeSql } from "./components/NativeSql";
 import { NlAsk } from "./components/NlAsk";
+import { DataSources } from "./components/DataSources";
+import { Settings } from "./components/Settings";
 
-type View = "explore" | "sql" | "saved" | "dashboards" | "ask";
+type View = "explore" | "sql" | "saved" | "dashboards" | "ask" | "data" | "settings";
 
 const VIEW_LABELS: Record<View, string> = {
   explore: "Explore",
@@ -14,6 +16,8 @@ const VIEW_LABELS: Record<View, string> = {
   saved: "Saved questions",
   dashboards: "Dashboards",
   ask: "Ask (NL2SQL)",
+  data: "Data sources",
+  settings: "Settings",
 };
 
 export default function App() {
@@ -24,6 +28,13 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  function reloadDatabases() {
+    api
+      .databases()
+      .then(setDatabases)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }
 
   useEffect(() => {
     Promise.all([api.health(), api.databases()])
@@ -80,7 +91,9 @@ export default function App() {
       </header>
 
       <nav className="app__nav">
-        {(["explore", "sql", "saved", "dashboards", "ask"] as View[]).map((v) => (
+        {(
+          ["explore", "sql", "saved", "dashboards", "ask", "data", "settings"] as View[]
+        ).map((v) => (
           <button key={v} className="tab" data-active={v === view} onClick={() => setView(v)}>
             {VIEW_LABELS[v]}
           </button>
@@ -90,8 +103,15 @@ export default function App() {
       {error && <p className="app__error">{error}</p>}
 
       <section className="app__panel">
-        {databases.length === 0 ? (
-          <p className="muted">No data sources, or the API is unreachable.</p>
+        {view === "data" ? (
+          // Admin: manage data sources — must work even with none connected yet.
+          <DataSources databases={databases} token={token} onChange={reloadDatabases} />
+        ) : view === "settings" ? (
+          <Settings token={token} />
+        ) : databases.length === 0 ? (
+          <p className="muted">
+            No data sources yet — add one in the <strong>Data sources</strong> tab.
+          </p>
         ) : view === "explore" ? (
           <QueryBuilder databases={databases} token={token} />
         ) : view === "sql" ? (

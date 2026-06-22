@@ -82,8 +82,10 @@ pub struct McpConfig {
 pub struct Nl2SqlConfig {
     /// Whether the NL2SQL integration is enabled.
     pub enabled: bool,
-    /// LLM provider that performs translation: `mock`, `openai`, `anthropic`,
-    /// `ollama`, or `gemini`.
+    /// LLM provider that performs translation: `mock`, `openai`, `openrouter`,
+    /// `litellm`, `vllm`, `bedrock`, `anthropic`, `ollama`, or `gemini`.
+    /// (OpenRouter/LiteLLM/vLLM/Bedrock are OpenAI-compatible; the latter three
+    /// use `base_url`.)
     pub provider: String,
     /// Model identifier passed to the provider.
     pub model: String,

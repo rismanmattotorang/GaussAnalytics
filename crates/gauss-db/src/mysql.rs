@@ -188,6 +188,20 @@ impl DatabaseRepository for MySqlStore {
         Ok(())
     }
 
+    async fn delete_database(&self, id: Uuid) -> CoreResult<()> {
+        sqlx::query("DELETE FROM source_tables WHERE database_id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        sqlx::query("DELETE FROM data_sources WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(storage)?;
+        Ok(())
+    }
+
     async fn upsert_table(&self, table: Table) -> CoreResult<()> {
         let fields_json =
             serde_json::to_string(&table.fields).map_err(|e| CoreError::Storage(e.to_string()))?;

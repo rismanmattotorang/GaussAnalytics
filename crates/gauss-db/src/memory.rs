@@ -120,6 +120,16 @@ impl DatabaseRepository for InMemoryStore {
         Ok(())
     }
 
+    async fn delete_database(&self, id: Uuid) -> CoreResult<()> {
+        self.databases.write().map_err(lock_err)?.remove(&id);
+        // Drop the source's discovered tables too.
+        self.tables
+            .write()
+            .map_err(lock_err)?
+            .retain(|(db_id, _), _| *db_id != id);
+        Ok(())
+    }
+
     async fn upsert_table(&self, table: Table) -> CoreResult<()> {
         let key = (table.database_id, table.name.clone());
         self.tables.write().map_err(lock_err)?.insert(key, table);
