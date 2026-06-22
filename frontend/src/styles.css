@@ -495,3 +495,109 @@ code {
 }
 .dash__text h2, .dash__text h3, .dash__text h4 { margin: 0.2rem 0; }
 .dash__notes { width: 100%; font-family: inherit; }
+
+/* --- Notebooks --- */
+.notebooks__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.notebooks__title {
+  flex: 1;
+  min-width: 160px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  background: #0f1530;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+}
+.notebooks__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.notebooks__create {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+.notebooks__list {
+  list-style: none;
+  padding: 0;
+}
+.notebooks__list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0.35rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.notebooks__add {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+.nb-cell {
+  background: #151924;
+  border: 1px solid #29313f;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.nb-cell[data-kind="python"] {
+  border-left: 3px solid var(--accent);
+}
+.nb-cell[data-kind="markdown"] {
+  border-left: 3px solid var(--muted);
+}
+.nb-cell__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.nb-cell__kind {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.nb-cell__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nb-cell__src {
+  width: 100%;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.9rem;
+}
+.nb-cell__md {
+  padding: 6px 4px;
+  border-top: 1px dashed #29313f;
+  margin-top: 6px;
+}
+.nb-cell__md h2, .nb-cell__md h3, .nb-cell__md h4 { margin: 0.2rem 0; }
+.nb-output {
+  background: #0b1020;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+.nb-output--error {
+  color: var(--error);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+.nb-output__img {
+  max-width: 100%;
+  margin-top: 6px;
+  border-radius: 6px;
+}

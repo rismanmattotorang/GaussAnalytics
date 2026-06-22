@@ -19,6 +19,7 @@ gauss-mcp-gateway.workspace = true
 gauss-nl2sql.workspace = true
 gauss-engine.workspace = true
 gauss-llm.workspace = true
+gauss-notebook.workspace = true
 
 tokio.workspace = true
 async-trait.workspace = true

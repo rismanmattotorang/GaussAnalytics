@@ -3,18 +3,28 @@ import { api, type Database, type Health } from "./api/client";
 import { QueryBuilder } from "./components/QueryBuilder";
 import { SavedQuestions } from "./components/SavedQuestions";
 import { Dashboards } from "./components/Dashboards";
+import { Notebooks } from "./components/Notebooks";
 import { NativeSql } from "./components/NativeSql";
 import { NlAsk } from "./components/NlAsk";
 import { DataSources } from "./components/DataSources";
 import { Settings } from "./components/Settings";
 
-type View = "explore" | "sql" | "saved" | "dashboards" | "ask" | "data" | "settings";
+type View =
+  | "explore"
+  | "sql"
+  | "saved"
+  | "dashboards"
+  | "notebooks"
+  | "ask"
+  | "data"
+  | "settings";
 
 const VIEW_LABELS: Record<View, string> = {
   explore: "Explore",
   sql: "SQL",
   saved: "Saved questions",
   dashboards: "Dashboards",
+  notebooks: "Notebooks",
   ask: "Ask (NL2SQL)",
   data: "Data sources",
   settings: "Settings",
@@ -92,7 +102,16 @@ export default function App() {
 
       <nav className="app__nav">
         {(
-          ["explore", "sql", "saved", "dashboards", "ask", "data", "settings"] as View[]
+          [
+            "explore",
+            "sql",
+            "saved",
+            "dashboards",
+            "notebooks",
+            "ask",
+            "data",
+            "settings",
+          ] as View[]
         ).map((v) => (
           <button key={v} className="tab" data-active={v === view} onClick={() => setView(v)}>
             {VIEW_LABELS[v]}
@@ -108,6 +127,9 @@ export default function App() {
           <DataSources databases={databases} token={token} onChange={reloadDatabases} />
         ) : view === "settings" ? (
           <Settings token={token} />
+        ) : view === "notebooks" ? (
+          // Notebooks don't require a data source (Python cells run on Jupyter).
+          <Notebooks token={token} />
         ) : databases.length === 0 ? (
           <p className="muted">
             No data sources yet — add one in the <strong>Data sources</strong> tab.

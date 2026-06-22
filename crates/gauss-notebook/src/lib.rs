@@ -194,6 +194,19 @@ impl KernelGateway {
         Ok(())
     }
 
+    /// Interrupt a running kernel (`POST /api/kernels/{id}/interrupt`). Used to
+    /// stop a long-running or runaway cell without restarting the kernel.
+    pub async fn interrupt_kernel(&self, kernel_id: &str) -> CoreResult<()> {
+        let url = format!("{}/api/kernels/{kernel_id}/interrupt", self.base_url);
+        self.auth(self.client.post(&url))
+            .send()
+            .await
+            .map_err(integ)?
+            .error_for_status()
+            .map_err(integ)?;
+        Ok(())
+    }
+
     /// The `channels` WebSocket URL for a kernel (http→ws, https→wss).
     fn channels_url(&self, kernel_id: &str) -> String {
         let ws = if let Some(rest) = self.base_url.strip_prefix("https://") {

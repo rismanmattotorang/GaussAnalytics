@@ -1065,6 +1065,7 @@ dependencies = [
  "gauss-llm",
  "gauss-mcp-gateway",
  "gauss-nl2sql",
+ "gauss-notebook",
  "gauss-query",
  "gauss-scheduler",
  "serde",

@@ -22,6 +22,10 @@ async fn spawn_rest_mock() -> String {
         .route(
             "/api/kernels/{id}",
             delete(|Path(_id): Path<String>| async { StatusCode::NO_CONTENT }),
+        )
+        .route(
+            "/api/kernels/{id}/interrupt",
+            post(|Path(_id): Path<String>| async { StatusCode::NO_CONTENT }),
         );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -67,6 +71,7 @@ async fn start_and_shutdown_kernel_over_rest() {
     let gw = KernelGateway::new(base, "tok");
     let id = gw.start_kernel().await.unwrap();
     assert_eq!(id, "kernel-xyz");
+    gw.interrupt_kernel(&id).await.unwrap();
     gw.shutdown_kernel(&id).await.unwrap();
 }
 

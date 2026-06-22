@@ -101,6 +101,9 @@ BI loop, plus natural language on top:
 - Permissions, **row-level security**, signed-token embedding, content export/import
 - Background scheduler with query **alerts** and **emailed subscriptions**
 - Interactive charts (bar/line/area/scatter/funnel/combo/pie) via nivo/D3
+- **Embedded notebooks** (preview): Markdown + Python cells running on your
+  local Jupyter kernel — opt in with `GAUSS_JUPYTER_ENABLED`
+  ([plan](docs/NOTEBOOKS_PLAN.md))
 
 See [docs/COMPARISON.md](docs/COMPARISON.md) for an honest, feature-by-feature
 comparison with the reference platform.
@@ -110,7 +113,7 @@ comparison with the reference platform.
 ```
 crates/
   gauss-core · gauss-query · gauss-config · gauss-auth · gauss-db · gauss-drivers
-  gauss-scheduler · gauss-mcp-gateway · gauss-nl2sql · gauss-server · gauss-tui · gaussctl
+  gauss-scheduler · gauss-mcp-gateway · gauss-nl2sql · gauss-notebook · gauss-server · gauss-tui · gaussctl
   # NL2SQL engine:  gauss-engine · gauss-semantic · gauss-sqlguard · gauss-llm
   #                 gauss-sql · gauss-textsql · gauss-chart · gauss-insight
   #                 gauss-tools · gauss-embed · gauss-memory · gauss-runtime

@@ -337,6 +337,41 @@ pub struct Dashboard {
     pub text_cards: Vec<DashboardTextCard>,
 }
 
+/// The kind of a notebook cell. `Markdown` is prose rendered by the web UI;
+/// `Python` is code executed on the user's local Jupyter kernel via the notebook
+/// kernel gateway (see the `gauss-notebook` crate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CellKind {
+    Markdown,
+    Python,
+}
+
+/// One cell of a notebook: a kind plus its source text. The ordering of a
+/// notebook's `cells` vector is the display/execution order.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotebookCell {
+    pub id: Uuid,
+    pub kind: CellKind,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// An embedded data notebook: an ordered list of Markdown/Python cells. Code
+/// cells execute on the user's **local** Jupyter kernel (GaussAnalytics never
+/// runs arbitrary code in its own process). Persisted as content like cards and
+/// dashboards; a running kernel is tracked server-side, not stored here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Notebook {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(default)]
+    pub collection_id: Option<Uuid>,
+    #[serde(default)]
+    pub cells: Vec<NotebookCell>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::DataSourceKind;
