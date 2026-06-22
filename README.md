@@ -102,9 +102,10 @@ BI loop, plus natural language on top:
 - Background scheduler with query **alerts** and **emailed subscriptions**
 - Interactive charts (bar/line/area/scatter/funnel/combo/pie) via nivo/D3
 - **Embedded notebooks** (preview): Markdown · Python · SQL/NL2SQL (→ pandas
-  DataFrame) · Input · nivo **charts** & **big numbers** over any DataFrame, with
-  a reactive dependency DAG (run-in-order, re-run-dependents) — on your local
-  Jupyter kernel; opt in with `GAUSS_JUPYTER_ENABLED`
+  DataFrame) · Input · nivo **charts** & **big numbers**, with a reactive
+  dependency DAG (run-in-order, re-run-dependents) — and **publish any cell's
+  output onto a dashboard** (snapshot-rendered, schedule-refreshed). On your
+  local Jupyter kernel; opt in with `GAUSS_JUPYTER_ENABLED`
   ([plan](docs/NOTEBOOKS_PLAN.md))
 
 See [docs/COMPARISON.md](docs/COMPARISON.md) for an honest, feature-by-feature

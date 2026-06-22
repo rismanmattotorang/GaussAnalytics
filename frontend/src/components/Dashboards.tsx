@@ -4,13 +4,54 @@ import {
   type Card,
   type Dashboard,
   type DashboardCardResult,
+  type DashboardNotebookCard,
   type DashboardParameter,
   type DashboardTab,
+  type NotebookCardSnapshot,
   type ParamBinding,
   type ParamKind,
 } from "../api/client";
 import { matchingParam, move, orderedLayout, type LayoutItem } from "../lib/dashboard";
 import { ResultView } from "./ResultView";
+
+/** Render a published notebook-cell snapshot: a nivo chart, a headline number,
+ * a table, an image, or text — whatever the cell produced. */
+function NotebookTile({ card }: { card: DashboardNotebookCard }) {
+  let snap: NotebookCardSnapshot | null = null;
+  try {
+    snap = card.snapshot ? (JSON.parse(card.snapshot) as NotebookCardSnapshot) : null;
+  } catch {
+    snap = null;
+  }
+  if (!snap) return <p className="muted">Not yet refreshed.</p>;
+  if (snap.image) {
+    return (
+      <img
+        className="nb-output__img"
+        alt={card.title}
+        src={`data:image/png;base64,${snap.image}`}
+      />
+    );
+  }
+  if (snap.result) {
+    if (card.view === "big_number") {
+      const value = snap.result.rows[0]?.[0];
+      return (
+        <div className="big-number">
+          <div className="big-number__value">
+            {value === null || value === undefined ? "∅" : String(value)}
+          </div>
+          <div className="big-number__label">{snap.result.columns[0] ?? ""}</div>
+        </div>
+      );
+    }
+    // chart (nivo) or table — ResultView picks/renders either.
+    return <ResultView result={snap.result} />;
+  }
+  if (snap.html) return <div dangerouslySetInnerHTML={{ __html: snap.html }} />;
+  if (snap.text) return <pre className="nb-output">{snap.text}</pre>;
+  return <p className="muted">No output.</p>;
+}
 
 function valuesObj(filters: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -93,6 +134,21 @@ export function Dashboards({ token }: { token: string | null }) {
     const handle = setInterval(() => runBoard(open, valuesObj(filterValues)), autoRefresh * 1000);
     return () => clearInterval(handle);
   }, [open, autoRefresh, filterValues]);
+
+  async function refreshNotebooks() {
+    if (!token || !open) return;
+    setError(null);
+    try {
+      await api.refreshDashboard(open.id, token);
+      // Reload the dashboard so the refreshed snapshots render.
+      const all = await api.dashboards();
+      const updated = all.find((d) => d.id === open.id);
+      if (updated) setOpen(updated);
+      setDashboards(all);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   function crossFilter(column: string, value: unknown) {
     if (!open) return;
@@ -238,6 +294,11 @@ export function Dashboards({ token }: { token: string | null }) {
               save layout
             </button>
           )}
+          {token && (open.notebook_cards?.length ?? 0) > 0 && (
+            <button className="link" onClick={refreshNotebooks}>
+              refresh notebooks
+            </button>
+          )}
         </div>
         {(open.links ?? []).length > 0 && (
           <div className="dash__bar">
@@ -315,6 +376,19 @@ export function Dashboards({ token }: { token: string | null }) {
               </div>
             );
           })}
+          {(open.notebook_cards ?? []).map((nc) => (
+            <div
+              className="dash__tile"
+              key={nc.id}
+              style={{ gridColumn: (nc.w ?? 1) === 2 ? "span 2" : "span 1" }}
+            >
+              <div className="dash__tilehead">
+                <h3>{nc.title}</h3>
+                <span className="muted nb-cell__kind">notebook</span>
+              </div>
+              <NotebookTile card={nc} />
+            </div>
+          ))}
         </div>
       </div>
     );

@@ -3,6 +3,7 @@ import {
   api,
   type CellKind,
   type CellOutput,
+  type Dashboard,
   type Database,
   type Notebook,
   type NotebookCell,
@@ -135,6 +136,7 @@ export function Notebooks({
   databases: Database[];
 }) {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [open, setOpen] = useState<Notebook | null>(null);
   const [name, setName] = useState("");
   const [cells, setCells] = useState<NotebookCell[]>([]);
@@ -145,6 +147,8 @@ export function Notebooks({
   const [kernelRunning, setKernelRunning] = useState(false);
   const [saved, setSaved] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [publishTarget, setPublishTarget] = useState("");
+  const [publishedId, setPublishedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function load() {
@@ -152,6 +156,10 @@ export function Notebooks({
       .notebooks()
       .then(setNotebooks)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    api
+      .dashboards()
+      .then(setDashboards)
+      .catch(() => {});
   }
   useEffect(load, []);
 
@@ -291,6 +299,20 @@ export function Notebooks({
     }
   }
 
+  // Pin a cell's output onto the selected dashboard as a tile (runs the
+  // notebook server-side to snapshot the cell).
+  async function publish(cell: NotebookCell) {
+    if (!token || !open || !publishTarget) return;
+    setError(null);
+    setPublishedId(null);
+    try {
+      await api.publishCell(open.id, { cell_id: cell.id, dashboard_id: publishTarget }, token);
+      setPublishedId(cell.id);
+    } catch (e) {
+      fail(e);
+    }
+  }
+
   async function startKernel() {
     if (!token || !open) return;
     try {
@@ -339,6 +361,21 @@ export function Notebooks({
             </button>
             <button onClick={save}>Save</button>
             {saved && <span className="ds-ok">Saved</span>}
+            {dashboards.length > 0 && (
+              <select
+                aria-label="publish target"
+                value={publishTarget}
+                onChange={(e) => setPublishTarget(e.target.value)}
+                title="Dashboard to publish cells to"
+              >
+                <option value="">publish to…</option>
+                {dashboards.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {kernelRunning ? (
               <button className="link" onClick={stopKernel}>
                 Stop kernel
@@ -398,6 +435,15 @@ export function Notebooks({
                       >
                         Run ↓
                       </button>
+                      {publishTarget && (
+                        <button
+                          className="link"
+                          title="Pin this cell's output to the selected dashboard"
+                          onClick={() => publish(cell)}
+                        >
+                          {publishedId === cell.id ? "Published ✓" : "Publish"}
+                        </button>
+                      )}
                     </>
                   )}
                   <button className="link" onClick={() => removeCell(cell.id)}>

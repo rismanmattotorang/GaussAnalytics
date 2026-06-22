@@ -22,7 +22,10 @@ already superior and is honest about what is still in progress.
 | Engine testing | — | **Differential harness** (engine vs. independent reference evaluator) + **golden SQL** across 4 dialects | Semantic drift is caught in CI |
 | Embedding | Signed-token embedding | **HMAC-SHA256 signed embed tokens**, constant-time verified, stateless | Same capability, minimal and auditable |
 | Caching | Query/result caching | **Compiled-query-keyed TTL cache** (pluggable to Redis) | Identical GQL shares cache entries |
-| Scheduling | Quartz | **Lean Tokio scheduler** (deterministic, unit-tested) + query alerts | No heavyweight scheduler dependency |
+| Scheduling | Quartz | **Lean Tokio scheduler** (deterministic, unit-tested) + query alerts + scheduled notebook-card refresh | No heavyweight scheduler dependency |
+| Dashboards | SQL-question tiles, filters, text cards | **All of that** (drag-layout, tabs, dashboard links, cross-filter, parameters, Markdown text cards, embedding, emailed subscriptions) **plus tiles backed by computed notebook outputs** | A dashboard tile can be an arbitrary Python/ML result, not just a SQL query |
+| Notebooks→dashboards | — (BI tool has no notebook) | **Publish a notebook cell (chart/big-number/table/matplotlib) as a dashboard card**, snapshot-rendered and schedule-refreshed | Pandas/sklearn/PyTorch outputs become first-class dashboard tiles |
+| Charting | Built-in chart library | **nivo/D3** (bar/line/area/funnel/scatter/combo/pie/pivot) shared across questions, dashboards, **and** notebook cells | One consistent, modern D3 chart layer everywhere |
 
 ## Performance posture
 
@@ -53,9 +56,11 @@ effectively free relative to network/DB round-trips.
 
 GaussAnalytics does **not yet** match the reference platform's *breadth*:
 
-- **Visualization depth**: the web UI has a working query builder, table + bar
-  chart, saved questions, and an NL ask panel — but not yet the full chart
-  library (line/area/pie/map/pivot) or a drag-and-drop dashboard layout editor.
+- **Visualization depth**: the web UI now ships the **nivo/D3** chart library
+  (bar/line/area/funnel/scatter/combo/pie/pivot), a **drag-and-drop dashboard
+  layout editor** (reorder, per-tile width, tabs, links, cross-filter), and
+  **embedded notebooks** whose chart/big-number/table/image cells publish onto
+  dashboards. Remaining: geospatial **maps** and deeper drill-through config.
 - **Driver breadth**: SQLite/Postgres/MySQL plus **BigQuery/Snowflake/ClickHouse**
   (the latter three as integration-stage REST drivers with golden-tested
   dialects, live-validation pending); further long tail (Redshift, Databricks,
