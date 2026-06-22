@@ -1,0 +1,23 @@
+[package]
+name = "gauss-notebook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GaussAnalytics notebook kernel gateway: drive a user-local Jupyter Server (start kernels, execute code, stream outputs) for embedded data notebooks."
+
+[dependencies]
+gauss-core.workspace = true
+reqwest.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+axum.workspace = true

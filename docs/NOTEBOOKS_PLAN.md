@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** N0 delivered · N1–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -113,9 +113,14 @@ permissions/`CreateContent`, and appear in export/import.
 
 ## 5. Delivery phases
 
-- **N0 — Spike (1–2 wks):** prove the kernel gateway against a local Jupyter Server
-  (start kernel, execute `print`, stream output). Pin `@deepnote/blocks`/`convert`
-  versions. De-risks the riskiest piece first.
+- **N0 — Spike ✅ delivered:** the `gauss-notebook` crate ships a **kernel gateway**
+  that drives a local Jupyter Server over REST + WebSocket — start/shut down a kernel,
+  send `execute_request`, and stream `iopub` outputs (`stream`/`execute_result`/
+  `display_data`/`error`) into a normalized `CellOutput`, terminating on `status: idle`
+  for the request's own `parent_header`. Proven by a **mock-Jupyter** test suite (axum
+  REST mock + `tokio-tungstenite` WS mock) so CI stays green without Python. Wired to
+  `GAUSS_JUPYTER_ENABLED` / `_URL` / `_TOKEN` (off by default). `@deepnote/blocks`/
+  `convert` version pinning lands with the frontend in N1.
 - **N1 — Notebook MVP:** `gauss-notebook` doc model + CRUD + storage; React notebook
   with **Markdown + Python** blocks; run/stream/interrupt via the gateway.
 - **N2 — Data:** **SQL** + **NL2SQL** blocks (→ DataFrame injection, RLS-aware) and

@@ -993,6 +993,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gauss-notebook"
+version = "1.0.0"
+dependencies = [
+ "axum",
+ "futures",
+ "gauss-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "gauss-query"
 version = "1.0.0"
 dependencies = [
