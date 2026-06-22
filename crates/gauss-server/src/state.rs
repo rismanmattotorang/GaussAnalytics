@@ -1,10 +1,13 @@
 //! Shared application state injected into every handler.
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use gauss_config::{AppConfig, Nl2SqlConfig};
-use gauss_core::error::CoreError;
+use gauss_core::domain::Database;
+use gauss_core::error::{CoreError, CoreResult};
 use gauss_db::{ContentRecord, Store};
+use gauss_drivers::Driver;
 use gauss_engine::traits::LlmService;
 use gauss_llm::{
     AnthropicLlmService, GeminiLlmService, MockLlmService, OllamaLlmService, OpenAiLlmService,
@@ -14,6 +17,65 @@ use gauss_nl2sql::{LlmNl2Sql, Nl2SqlPipeline};
 use uuid::Uuid;
 
 use crate::cache::ResultCache;
+
+/// A live, reused connection to a data source. Reconnects automatically when the
+/// stored connection URI changes (a different `uri` invalidates the cache entry).
+struct CachedDriver {
+    uri: String,
+    driver: Arc<dyn Driver>,
+}
+
+/// Caches one live [`Driver`] per data source so connection pools (sqlx) and
+/// HTTP clients (REST drivers) are established once and **reused** across
+/// requests, instead of opening a fresh pool on every query. Evicted when a
+/// source is deleted or its connection URI changes.
+#[derive(Default)]
+pub struct ConnectionRegistry {
+    conns: RwLock<HashMap<Uuid, CachedDriver>>,
+}
+
+impl ConnectionRegistry {
+    /// Return a reused driver for `db`, connecting (and caching) on first use or
+    /// when the connection URI has changed since the cached entry.
+    pub async fn driver_for(&self, db: &Database) -> CoreResult<Arc<dyn Driver>> {
+        let uri = db.connection_uri.clone().ok_or_else(|| {
+            CoreError::InvalidQuery(format!(
+                "data source `{}` has no connection configured",
+                db.name
+            ))
+        })?;
+        // Fast path: a cached, still-valid connection.
+        if let Some(c) = self.conns.read().expect("conn lock").get(&db.id) {
+            if c.uri == uri {
+                return Ok(c.driver.clone());
+            }
+        }
+        // Slow path: connect without holding the lock across the await.
+        let driver: Arc<dyn Driver> = Arc::from(gauss_drivers::connect(db.kind, &uri).await?);
+        self.conns.write().expect("conn lock").insert(
+            db.id,
+            CachedDriver {
+                uri,
+                driver: driver.clone(),
+            },
+        );
+        Ok(driver)
+    }
+
+    /// Drop the cached connection for a data source (on delete or reconfigure).
+    pub fn evict(&self, id: Uuid) {
+        self.conns.write().expect("conn lock").remove(&id);
+    }
+
+    /// Number of cached connections (for diagnostics/tests).
+    pub fn len(&self) -> usize {
+        self.conns.read().expect("conn lock").len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
 
 /// Reserved content kind + fixed id under which the live AI settings are
 /// persisted in the metadata store (so they survive restarts without a new
@@ -70,6 +132,8 @@ pub struct AppState {
     pub mcp: Option<Arc<dyn McpGateway>>,
     /// Live, runtime-editable AI/NL2SQL state (config + hot-swappable pipeline).
     pub ai: Arc<RwLock<AiState>>,
+    /// Reused live connections to data sources (one pool/client per source).
+    pub connections: Arc<ConnectionRegistry>,
 }
 
 /// The LLM providers this build can drive for NL2SQL. OpenRouter, LiteLLM, and
@@ -202,6 +266,7 @@ impl AppState {
             usage: Arc::new(UsageStats::default()),
             mcp,
             ai,
+            connections: Arc::new(ConnectionRegistry::default()),
         })
     }
 

@@ -9,8 +9,9 @@ use gauss_core::domain::{FieldType, Fingerprint};
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::{CompiledQuery, SqlParam};
 use serde_json::{json, Value as JsonValue};
-use sqlx::mysql::{MySqlPool, MySqlRow};
+use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Row};
+use std::time::Duration;
 
 use crate::{DiscoveredColumn, DiscoveredTable, Driver, QueryResult};
 
@@ -21,7 +22,13 @@ pub struct MySqlDriver {
 
 impl MySqlDriver {
     pub async fn connect(url: &str) -> CoreResult<Self> {
-        let pool = MySqlPool::connect(url).await.map_err(storage)?;
+        // Bounded pool + acquire timeout (see PgDriver::connect).
+        let pool = MySqlPoolOptions::new()
+            .max_connections(crate::MAX_POOL_CONNECTIONS)
+            .acquire_timeout(Duration::from_secs(crate::POOL_ACQUIRE_TIMEOUT_SECS))
+            .connect(url)
+            .await
+            .map_err(storage)?;
         Ok(Self { pool })
     }
 

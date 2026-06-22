@@ -38,6 +38,13 @@ pub use postgres::PgDriver;
 pub use snowflake::SnowflakeDriver;
 pub use sqlite::SqliteDriver;
 
+/// Maximum pooled connections per SQL data source (sqlx backends). Bounds the
+/// server's fan-out into any single source.
+pub const MAX_POOL_CONNECTIONS: u32 = 10;
+/// How long to wait for a free pooled connection before erroring, so a slow or
+/// dead source surfaces a clean error instead of hanging the request.
+pub const POOL_ACQUIRE_TIMEOUT_SECS: u64 = 30;
+
 /// The tabular result of executing a query.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryResult {

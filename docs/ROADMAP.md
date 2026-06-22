@@ -3,7 +3,23 @@
 > **Owner:** Gaussian Technologies
 
 Phased, strangler-fig migration. Every phase ends with compiling code, tests,
-and a runnable artifact. Phases 0 and 1 are delivered in this changeset.
+and a runnable artifact.
+
+---
+
+## 🎉 v1.0 (released)
+
+The BI loop is complete end-to-end and the data-source layer is
+production-grade:
+
+- [x] Seven engines behind one driver/dialect abstraction (SQLite, PostgreSQL,
+      MySQL, Oracle, Snowflake, BigQuery, ClickHouse).
+- [x] **Pooled, reused live connections** (`ConnectionRegistry`) with bounded
+      sqlx pools + acquire timeouts; evicted on delete/reconfigure.
+- [x] **Credential masking** — connection-string secrets never leave the server.
+- [x] In-house, runtime-configurable NL2SQL; auto chart/summary/follow-ups.
+- [x] Dashboards (filters, layout, tabs, text cards, cross-filter), RLS,
+      embedding, alerts + emailed subscriptions, export/import.
 
 ---
 
