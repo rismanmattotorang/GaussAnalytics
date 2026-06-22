@@ -73,12 +73,24 @@ pub struct McpConfig {
     pub timeout_ms: u64,
 }
 
-/// Integration settings for Gaussian's NL2SQL service.
+/// Settings for the in-house NL2SQL engine.
+///
+/// Translation runs in-process against a configured LLM provider; there is no
+/// external NL2SQL service and therefore no service credential. `api_key`, when
+/// required, is the LLM provider's own key (read from the environment).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Nl2SqlConfig {
     /// Whether the NL2SQL integration is enabled.
     pub enabled: bool,
-    /// Base URL of the Gaussian NL2SQL service.
+    /// LLM provider that performs translation: `mock`, `openai`, `anthropic`,
+    /// `ollama`, or `gemini`.
+    pub provider: String,
+    /// Model identifier passed to the provider.
+    pub model: String,
+    /// Provider API key. Empty for providers that need none (`mock`, `ollama`).
+    pub api_key: String,
+    /// Optional base-URL override for self-hosted / OpenAI-compatible / Ollama
+    /// endpoints. Empty uses the provider default.
     pub base_url: String,
     /// Request timeout in milliseconds.
     pub timeout_ms: u64,
@@ -110,7 +122,10 @@ impl Default for AppConfig {
             },
             nl2sql: Nl2SqlConfig {
                 enabled: false,
-                base_url: "http://localhost:8849".into(),
+                provider: "mock".into(),
+                model: String::new(),
+                api_key: String::new(),
+                base_url: String::new(),
                 timeout_ms: 30_000,
             },
         }
@@ -123,7 +138,8 @@ impl AppConfig {
     /// Recognized variables:
     /// `GAUSS_HOST`, `GAUSS_PORT`, `GAUSS_STATIC_DIR`, `GAUSS_DATABASE_URL`,
     /// `GAUSS_SESSION_TTL_SECS`, `GAUSS_MCP_ENABLED`, `GAUSS_MCP_BASE_URL`,
-    /// `GAUSS_MCP_TIMEOUT_MS`, `GAUSS_NL2SQL_ENABLED`, `GAUSS_NL2SQL_BASE_URL`,
+    /// `GAUSS_MCP_TIMEOUT_MS`, `GAUSS_NL2SQL_ENABLED`, `GAUSS_NL2SQL_PROVIDER`,
+    /// `GAUSS_NL2SQL_MODEL`, `GAUSS_NL2SQL_API_KEY`, `GAUSS_NL2SQL_BASE_URL`,
     /// `GAUSS_NL2SQL_TIMEOUT_MS`.
     pub fn from_env() -> CoreResult<Self> {
         let get = |k: &str| std::env::var(k).ok();
@@ -179,6 +195,15 @@ impl AppConfig {
         }
         if let Some(v) = get("GAUSS_NL2SQL_ENABLED") {
             cfg.nl2sql.enabled = parse_bool(&v, "GAUSS_NL2SQL_ENABLED")?;
+        }
+        if let Some(v) = get("GAUSS_NL2SQL_PROVIDER") {
+            cfg.nl2sql.provider = v;
+        }
+        if let Some(v) = get("GAUSS_NL2SQL_MODEL") {
+            cfg.nl2sql.model = v;
+        }
+        if let Some(v) = get("GAUSS_NL2SQL_API_KEY") {
+            cfg.nl2sql.api_key = v;
         }
         if let Some(v) = get("GAUSS_NL2SQL_BASE_URL") {
             cfg.nl2sql.base_url = v;

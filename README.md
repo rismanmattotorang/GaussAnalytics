@@ -95,7 +95,7 @@ All configuration is environment-driven (`GAUSS_*`); sensible defaults apply.
 | `GAUSS_HOST` / `GAUSS_PORT` | `127.0.0.1` / `3000` | server bind address |
 | `GAUSS_STATIC_DIR` | `frontend/dist` | built web UI to serve |
 | `GAUSS_DATABASE_URL` | `sqlite://data/gauss.db` | app metadata store (Phase 2) |
-| `GAUSS_NL2SQL_ENABLED` / `GAUSS_NL2SQL_BASE_URL` | `false` | Gaussian NL2SQL integration |
+| `GAUSS_NL2SQL_ENABLED` / `GAUSS_NL2SQL_PROVIDER` | `false` / `mock` | in-house NL2SQL engine (LLM provider) |
 | `GAUSS_MCP_ENABLED` / `GAUSS_MCP_BASE_URL` | `false` | Gaussian MCP Gateway integration |
 
 See [`.env.example`](.env.example) for the full list.

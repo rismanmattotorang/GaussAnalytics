@@ -5,14 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Integration layer to Gaussian's NL2SQL service, with grounding and guardrails."
+description = "In-house NL2SQL integration: grounding, in-process LLM translation, and read-only guardrails."
 
 [dependencies]
 gauss-core.workspace = true
+gauss-engine.workspace = true
+gauss-textsql.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
-reqwest.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
+gauss-llm.workspace = true
