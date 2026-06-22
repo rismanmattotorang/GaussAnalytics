@@ -16,8 +16,8 @@ use gauss_core::gql::{AggFunc, Aggregation, Filter, Literal, Query};
 use serde::{Deserialize, Serialize};
 
 pub use dialect::{
-    BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, MySqlDialect, PostgresDialect,
-    SnowflakeDialect, SqliteDialect,
+    BigQueryDialect, ClickHouseDialect, Dialect, GenericDialect, MySqlDialect, OracleDialect,
+    PostgresDialect, SnowflakeDialect, SqliteDialect,
 };
 
 /// A typed parameter to be bound at execution time.
@@ -120,8 +120,10 @@ impl Builder<'_> {
         }
 
         if let Some(limit) = q.limit {
-            // `limit` is an integer we control, so inlining is injection-safe.
-            sql.push_str(&format!(" LIMIT {limit}"));
+            // Dialect-aware: `LIMIT n` for most engines, `OFFSET/FETCH` for
+            // Oracle/SQL Server. `limit` is an integer we control (injection-safe).
+            sql.push(' ');
+            sql.push_str(&self.dialect.limit_clause(limit));
         }
 
         Ok(sql)
@@ -341,5 +343,75 @@ mod tests {
         }];
         let c = compile(&q, &GenericDialect).unwrap();
         assert!(c.sql.ends_with("WHERE 1 = 0"));
+    }
+
+    #[test]
+    fn oracle_uses_colon_binds_and_fetch_first() {
+        // Oracle has no LIMIT and uses :n bind variables — the compiler must
+        // emit the ANSI OFFSET/FETCH form and `:1` placeholders.
+        let mut q = Query::new("orders");
+        q.fields = vec!["id".into()];
+        q.filters = vec![Filter::Compare {
+            field: "total".into(),
+            op: CompareOp::Ge,
+            value: Literal::Int(100),
+        }];
+        q.limit = Some(10);
+        let c = compile(&q, &OracleDialect).unwrap();
+        assert_eq!(
+            c.sql,
+            r#"SELECT "id" FROM "orders" WHERE "total" >= :1 OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY"#
+        );
+        assert_eq!(c.params, vec![SqlParam::Int(100)]);
+    }
+
+    /// The same query compiles to the correct per-engine SQL across every
+    /// data source GaussAnalytics connects to: identifier quoting, placeholder
+    /// style, and the row-limit clause all vary by dialect.
+    #[test]
+    fn dialect_matrix_quotes_binds_and_limits() {
+        use gauss_core::domain::DataSourceKind::*;
+
+        let mut q = Query::new("orders");
+        q.fields = vec!["id".into()];
+        q.filters = vec![Filter::Compare {
+            field: "status".into(),
+            op: CompareOp::Eq,
+            value: Literal::Text("paid".into()),
+        }];
+        q.limit = Some(5);
+
+        let cases = [
+            (
+                Sqlite,
+                r#"SELECT "id" FROM "orders" WHERE "status" = ? LIMIT 5"#,
+            ),
+            (
+                Postgres,
+                r#"SELECT "id" FROM "orders" WHERE "status" = $1 LIMIT 5"#,
+            ),
+            (
+                MySql,
+                "SELECT `id` FROM `orders` WHERE `status` = ? LIMIT 5",
+            ),
+            (
+                Oracle,
+                r#"SELECT "id" FROM "orders" WHERE "status" = :1 OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY"#,
+            ),
+            (
+                Snowflake,
+                r#"SELECT "id" FROM "orders" WHERE "status" = ? LIMIT 5"#,
+            ),
+        ];
+        for (kind, expected) in cases {
+            let dialect = dialect::for_kind(kind);
+            let c = compile(&q, dialect.as_ref()).unwrap();
+            assert_eq!(c.sql, expected, "dialect {kind}");
+            assert_eq!(
+                c.params,
+                vec![SqlParam::Text("paid".into())],
+                "dialect {kind}"
+            );
+        }
     }
 }

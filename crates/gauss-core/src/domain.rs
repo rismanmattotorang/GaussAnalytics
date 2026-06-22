@@ -20,12 +20,18 @@ pub struct User {
 }
 
 /// The kind of an external data source GaussAnalytics can query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// Its wire form (API JSON), its persisted form (the metadata store), and its
+/// dialect/driver resolution all flow through a single canonical string mapping
+/// ([`DataSourceKind::as_str`] / [`DataSourceKind::from_kind_str`]), so the
+/// frontend, the database, and the backend can never disagree on a kind's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSourceKind {
     Postgres,
     MySql,
     Sqlite,
+    /// Oracle Database (ORDS REST, `:n` bind variables, `FETCH FIRST` paging).
+    Oracle,
     /// Google BigQuery (REST `jobs.query`, positional `?` parameters).
     BigQuery,
     /// Snowflake (SQL REST API, positional `?` bindings).
@@ -34,6 +40,58 @@ pub enum DataSourceKind {
     ClickHouse,
     /// A source whose dialect is standard-SQL-compatible.
     Generic,
+}
+
+impl DataSourceKind {
+    /// The canonical lowercase identifier for this kind. This is the single
+    /// source of truth shared by JSON (serde), persistence, and the frontend.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DataSourceKind::Postgres => "postgres",
+            DataSourceKind::MySql => "mysql",
+            DataSourceKind::Sqlite => "sqlite",
+            DataSourceKind::Oracle => "oracle",
+            DataSourceKind::BigQuery => "bigquery",
+            DataSourceKind::Snowflake => "snowflake",
+            DataSourceKind::ClickHouse => "clickhouse",
+            DataSourceKind::Generic => "generic",
+        }
+    }
+
+    /// Parse a canonical kind identifier, or `None` if unrecognized.
+    pub fn from_kind_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "postgres" => DataSourceKind::Postgres,
+            "mysql" => DataSourceKind::MySql,
+            "sqlite" => DataSourceKind::Sqlite,
+            "oracle" => DataSourceKind::Oracle,
+            "bigquery" => DataSourceKind::BigQuery,
+            "snowflake" => DataSourceKind::Snowflake,
+            "clickhouse" => DataSourceKind::ClickHouse,
+            "generic" => DataSourceKind::Generic,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for DataSourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for DataSourceKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for DataSourceKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        DataSourceKind::from_kind_str(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown data source kind {s:?}")))
+    }
 }
 
 /// A connected data source (a database GaussAnalytics can run queries against).
@@ -262,4 +320,37 @@ pub struct Dashboard {
     /// Optional tabs grouping cards into named sections.
     #[serde(default)]
     pub tabs: Vec<DashboardTab>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DataSourceKind;
+
+    #[test]
+    fn kind_strings_are_canonical_one_word() {
+        // The JSON wire form, the persisted form, and the frontend union all
+        // share these exact strings (no serde snake_case surprises like
+        // "my_sql" / "click_house").
+        for (kind, s) in [
+            (DataSourceKind::Postgres, "postgres"),
+            (DataSourceKind::MySql, "mysql"),
+            (DataSourceKind::Sqlite, "sqlite"),
+            (DataSourceKind::Oracle, "oracle"),
+            (DataSourceKind::BigQuery, "bigquery"),
+            (DataSourceKind::Snowflake, "snowflake"),
+            (DataSourceKind::ClickHouse, "clickhouse"),
+            (DataSourceKind::Generic, "generic"),
+        ] {
+            assert_eq!(kind.as_str(), s);
+            assert_eq!(DataSourceKind::from_kind_str(s), Some(kind));
+            // serde agrees with the canonical mapping, and round-trips.
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{s}\""));
+            assert_eq!(
+                serde_json::from_str::<DataSourceKind>(&format!("\"{s}\"")).unwrap(),
+                kind
+            );
+        }
+        assert_eq!(DataSourceKind::from_kind_str("nope"), None);
+        assert!(serde_json::from_str::<DataSourceKind>("\"nope\"").is_err());
+    }
 }

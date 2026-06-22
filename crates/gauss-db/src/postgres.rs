@@ -67,33 +67,6 @@ fn parse_ts(s: &str) -> CoreResult<DateTime<Utc>> {
         .map_err(|e| CoreError::Storage(format!("invalid timestamp {s:?}: {e}")))
 }
 
-fn kind_to_str(k: DataSourceKind) -> &'static str {
-    match k {
-        DataSourceKind::Postgres => "postgres",
-        DataSourceKind::MySql => "mysql",
-        DataSourceKind::Sqlite => "sqlite",
-        DataSourceKind::BigQuery => "bigquery",
-        DataSourceKind::Snowflake => "snowflake",
-        DataSourceKind::ClickHouse => "clickhouse",
-        DataSourceKind::Generic => "generic",
-    }
-}
-
-fn kind_from_str(s: &str) -> CoreResult<DataSourceKind> {
-    match s {
-        "postgres" => Ok(DataSourceKind::Postgres),
-        "mysql" => Ok(DataSourceKind::MySql),
-        "sqlite" => Ok(DataSourceKind::Sqlite),
-        "bigquery" => Ok(DataSourceKind::BigQuery),
-        "snowflake" => Ok(DataSourceKind::Snowflake),
-        "clickhouse" => Ok(DataSourceKind::ClickHouse),
-        "generic" => Ok(DataSourceKind::Generic),
-        other => Err(CoreError::Storage(format!(
-            "unknown data source kind {other:?}"
-        ))),
-    }
-}
-
 #[async_trait]
 impl UserRepository for PgStore {
     async fn create_user(&self, user: User, password_hash: String) -> CoreResult<()> {
@@ -175,7 +148,7 @@ impl DatabaseRepository for PgStore {
         )
         .bind(db.id.to_string())
         .bind(&db.name)
-        .bind(kind_to_str(db.kind))
+        .bind(db.kind.as_str())
         .bind(db.is_synced as i32)
         .bind(db.connection_uri)
         .bind(db.created_at.to_rfc3339())
@@ -261,7 +234,8 @@ fn database_from_row(row: PgRow) -> CoreResult<Database> {
     Ok(Database {
         id: parse_uuid(&row.try_get::<String, _>("id").map_err(storage)?)?,
         name: row.try_get("name").map_err(storage)?,
-        kind: kind_from_str(&row.try_get::<String, _>("kind").map_err(storage)?)?,
+        kind: DataSourceKind::from_kind_str(&row.try_get::<String, _>("kind").map_err(storage)?)
+            .ok_or_else(|| CoreError::Storage("unknown data source kind".into()))?,
         is_synced: row.try_get::<i32, _>("is_synced").map_err(storage)? != 0,
         connection_uri: row.try_get("connection_uri").map_err(storage)?,
         created_at: parse_ts(&row.try_get::<String, _>("created_at").map_err(storage)?)?,

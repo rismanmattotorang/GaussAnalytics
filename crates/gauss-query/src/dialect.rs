@@ -26,6 +26,16 @@ pub trait Dialect: Send + Sync {
     /// parameter's type in the placeholder itself (`{p1:Int64}`); most dialects
     /// ignore it.
     fn placeholder(&self, n: usize, param: &SqlParam) -> String;
+
+    /// Render the row-limit clause for `n` rows, appended after `ORDER BY`.
+    ///
+    /// Most engines use `LIMIT n`; the default reflects that. Engines that do
+    /// not (Oracle, SQL Server, DB2) override this with the ANSI `OFFSET/FETCH`
+    /// form. `n` is an integer the compiler controls, so inlining is
+    /// injection-safe.
+    fn limit_clause(&self, n: u64) -> String {
+        format!("LIMIT {n}")
+    }
 }
 
 /// Resolve the [`Dialect`] for a connected data source kind.
@@ -34,6 +44,7 @@ pub fn for_kind(kind: DataSourceKind) -> Box<dyn Dialect> {
         DataSourceKind::Postgres => Box::new(PostgresDialect),
         DataSourceKind::MySql => Box::new(MySqlDialect),
         DataSourceKind::Sqlite => Box::new(SqliteDialect),
+        DataSourceKind::Oracle => Box::new(OracleDialect),
         DataSourceKind::BigQuery => Box::new(BigQueryDialect),
         DataSourceKind::Snowflake => Box::new(SnowflakeDialect),
         DataSourceKind::ClickHouse => Box::new(ClickHouseDialect),
@@ -90,6 +101,26 @@ impl Dialect for SqliteDialect {
     }
     fn placeholder(&self, _n: usize, _param: &SqlParam) -> String {
         "?".to_string()
+    }
+}
+
+/// Oracle: double-quoted identifiers, `:n` numbered bind variables, and the
+/// ANSI `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` paging form (Oracle has no
+/// `LIMIT`). Oracle folds unquoted identifiers to upper-case, but our metadata
+/// is synced with the source's exact names, so quoting them verbatim is correct.
+pub struct OracleDialect;
+impl Dialect for OracleDialect {
+    fn name(&self) -> &'static str {
+        "oracle"
+    }
+    fn quote_ident(&self, ident: &str) -> String {
+        double_quote(ident)
+    }
+    fn placeholder(&self, n: usize, _param: &SqlParam) -> String {
+        format!(":{n}")
+    }
+    fn limit_clause(&self, n: u64) -> String {
+        format!("OFFSET 0 ROWS FETCH NEXT {n} ROWS ONLY")
     }
 }
 

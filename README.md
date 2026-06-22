@@ -141,6 +141,26 @@ See [`.env.example`](.env.example) for the full list.
 Read the [Architecture](docs/ARCHITECTURE.md) and [Strategy](docs/STRATEGY.md)
 for the full picture.
 
+## Data sources
+
+GaussAnalytics connects to a range of engines through one [`Driver`] trait and a
+per-engine SQL [`Dialect`]. The GQL compiler renders the **correct SQL for each**
+— identifier quoting, parameter placeholders, and row-limit syntax all vary by
+dialect — so the same question runs safely everywhere:
+
+| Engine | Driver | Identifiers | Placeholders | Row limit |
+|---|---|---|---|---|
+| SQLite | in-process (`sqlx`) | `"col"` | `?` | `LIMIT n` |
+| PostgreSQL | `sqlx` pool | `"col"` | `$n` | `LIMIT n` |
+| MySQL | `sqlx` pool | `` `col` `` | `?` | `LIMIT n` |
+| Oracle | ORDS REST | `"col"` | `:n` | `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` |
+| Snowflake | SQL REST API | `"col"` | `?` | `LIMIT n` |
+| BigQuery · ClickHouse | REST/HTTP | dialect-specific | dialect-specific | `LIMIT n` |
+
+A kind's name is a single canonical string (`"sqlite"`, `"oracle"`, …) shared by
+the API, the metadata store, and the frontend, so they can never disagree. Every
+value a user supplies is a **bound parameter** — never SQL text — on all engines.
+
 ## Project layout
 
 ```
@@ -150,7 +170,7 @@ crates/
   gauss-config        layered configuration
   gauss-auth          Argon2 hashing · sessions · RBAC
   gauss-db            metadata store (repository traits · in-memory · sqlx SQLite/Postgres)
-  gauss-drivers       data-source drivers (SQLite/Postgres/MySQL): execute · discover · fingerprint
+  gauss-drivers       data-source drivers (SQLite · Postgres · MySQL · Oracle · Snowflake · BigQuery · ClickHouse): execute · discover · fingerprint
   gauss-scheduler     background job engine (schema refresh, query alerts)
   gauss-mcp-gateway   integration layer → Gaussian MCP Servers
   gauss-nl2sql        in-house NL2SQL: grounding + in-process LLM translation + guardrails
