@@ -77,6 +77,94 @@ impl Notifier for WebhookNotifier {
     }
 }
 
+/// An outbound email, ready for a transport to deliver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Email {
+    pub to: Vec<String>,
+    pub subject: String,
+    pub body: String,
+}
+
+/// How an [`EmailNotifier`] actually delivers mail. Abstracted so delivery can
+/// be an HTTP email API in production and a recording sink in tests.
+#[async_trait]
+pub trait EmailSink: Send + Sync {
+    async fn send(&self, email: &Email) -> CoreResult<()>;
+}
+
+/// Delivers email by POSTing `{ to, subject, body }` to an HTTP email relay or
+/// transactional API (SendGrid/Postmark/SES-compatible, or an internal relay) —
+/// the same dependency-light pattern as [`WebhookNotifier`], reusing `reqwest`
+/// rather than embedding an SMTP stack.
+pub struct HttpRelayEmailSink {
+    client: reqwest::Client,
+    url: String,
+    from: String,
+}
+
+impl HttpRelayEmailSink {
+    pub fn new(url: impl Into<String>, from: impl Into<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            url: url.into(),
+            from: from.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl EmailSink for HttpRelayEmailSink {
+    async fn send(&self, email: &Email) -> CoreResult<()> {
+        let payload = serde_json::json!({
+            "from": self.from,
+            "to": email.to,
+            "subject": email.subject,
+            "body": email.body,
+        });
+        self.client
+            .post(&self.url)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| gauss_core::error::CoreError::Integration(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| gauss_core::error::CoreError::Integration(e.to_string()))?;
+        Ok(())
+    }
+}
+
+/// A [`Notifier`] that emails alerts/subscription digests to a fixed recipient
+/// list via an [`EmailSink`]. This is the email delivery channel for scheduled
+/// **subscriptions** (a dashboard/alert routed to people on a schedule),
+/// alongside the existing log and webhook channels.
+pub struct EmailNotifier {
+    sink: Arc<dyn EmailSink>,
+    recipients: Vec<String>,
+}
+
+impl EmailNotifier {
+    pub fn new(sink: Arc<dyn EmailSink>, recipients: Vec<String>) -> Self {
+        Self { sink, recipients }
+    }
+}
+
+#[async_trait]
+impl Notifier for EmailNotifier {
+    async fn notify(&self, subject: &str, body: &str) {
+        if self.recipients.is_empty() {
+            return;
+        }
+        let email = Email {
+            to: self.recipients.clone(),
+            subject: subject.to_string(),
+            body: body.to_string(),
+        };
+        if let Err(e) = self.sink.send(&email).await {
+            tracing::warn!(target: "gauss::alert", "email delivery failed: {e}");
+        }
+    }
+}
+
 struct Entry {
     name: String,
     interval: Duration,
@@ -199,6 +287,42 @@ mod tests {
             "Alert: too-many-errors: 5 rows matched"
         );
         assert_eq!(p["subject"].as_str().unwrap(), "Alert: too-many-errors");
+    }
+
+    /// Captures delivered email so the notifier is testable without a relay.
+    #[derive(Default)]
+    struct RecordingEmailSink {
+        sent: std::sync::Mutex<Vec<Email>>,
+    }
+    #[async_trait]
+    impl EmailSink for RecordingEmailSink {
+        async fn send(&self, email: &Email) -> CoreResult<()> {
+            self.sent.lock().unwrap().push(email.clone());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn email_notifier_delivers_to_recipients() {
+        let sink = Arc::new(RecordingEmailSink::default());
+        let notifier = EmailNotifier::new(sink.clone(), vec!["ops@example.com".into()]);
+        notifier
+            .notify("Weekly revenue", "Total revenue is up 12%.")
+            .await;
+        let sent = sink.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].to, vec!["ops@example.com".to_string()]);
+        assert_eq!(sent[0].subject, "Weekly revenue");
+        assert!(sent[0].body.contains("up 12%"));
+    }
+
+    #[tokio::test]
+    async fn email_notifier_with_no_recipients_is_a_noop() {
+        let sink = Arc::new(RecordingEmailSink::default());
+        EmailNotifier::new(sink.clone(), vec![])
+            .notify("x", "y")
+            .await;
+        assert!(sink.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

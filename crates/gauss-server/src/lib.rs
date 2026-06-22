@@ -68,7 +68,7 @@ pub fn router(state: AppState) -> Router {
         .route("/databases/{id}", delete(delete_database))
         .route("/databases/{id}/sync", post(sync_database))
         .route("/databases/{id}/tables", get(list_database_tables))
-        .route("/settings/ai", get(ai_settings))
+        .route("/settings/ai", get(ai_settings).put(update_ai_settings))
         .route("/dataset/compile", post(compile_dataset))
         .route("/dataset/run", post(run_dataset))
         .route("/dataset/native", post(native_dataset))
@@ -554,15 +554,62 @@ async fn ai_settings(
     headers: HeaderMap,
 ) -> Result<Json<AiSettingsResponse>, ApiError> {
     require_admin(&st, &headers).await?;
-    let c = &st.config.nl2sql;
-    Ok(Json(AiSettingsResponse {
+    Ok(Json(ai_response(&st.ai_config())))
+}
+
+fn ai_response(c: &gauss_config::Nl2SqlConfig) -> AiSettingsResponse {
+    AiSettingsResponse {
         enabled: c.enabled,
         provider: c.provider.clone(),
         model: c.model.clone(),
         base_url: c.base_url.clone(),
         has_api_key: !c.api_key.is_empty(),
         supported_providers: state::NL2SQL_PROVIDERS.to_vec(),
-    }))
+    }
+}
+
+/// Patch to the AI/NL2SQL settings. Fields are optional; omitted fields keep
+/// their current value. An empty `api_key` is treated as "leave unchanged", so
+/// the redacted UI never has to round-trip the secret.
+#[derive(Deserialize)]
+struct UpdateAiSettingsRequest {
+    enabled: Option<bool>,
+    provider: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+}
+
+/// Update the AI/NL2SQL configuration at runtime (admin only): validate, build
+/// the new pipeline, persist, and hot-swap — no server restart. Returns the new
+/// (redacted) settings.
+async fn update_ai_settings(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateAiSettingsRequest>,
+) -> Result<Json<AiSettingsResponse>, ApiError> {
+    require_admin(&st, &headers).await?;
+    let mut cfg = st.ai_config();
+    if let Some(v) = req.enabled {
+        cfg.enabled = v;
+    }
+    if let Some(v) = req.provider {
+        cfg.provider = v;
+    }
+    if let Some(v) = req.model {
+        cfg.model = v;
+    }
+    if let Some(v) = req.base_url {
+        cfg.base_url = v;
+    }
+    // An empty key means "keep the existing one"; a non-empty key replaces it.
+    if let Some(v) = req.api_key {
+        if !v.is_empty() {
+            cfg.api_key = v;
+        }
+    }
+    st.update_ai(cfg).await?;
+    Ok(Json(ai_response(&st.ai_config())))
 }
 
 // ---------------------------------------------------------------------------
@@ -848,8 +895,7 @@ async fn nl2sql_translate(
     Json(req): Json<Nl2SqlApiRequest>,
 ) -> Result<Json<GuardedQuery>, ApiError> {
     let pipeline = st
-        .nl2sql
-        .as_ref()
+        .nl2sql_pipeline()
         .ok_or_else(|| CoreError::NotFound("NL2SQL integration is not enabled".into()))?;
 
     let db = st
@@ -1123,6 +1169,10 @@ pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
     };
 
     let state = AppState::new(config, store)?;
+    // Apply any AI settings edited at runtime in a prior run (persisted).
+    if let Err(e) = state.reload_ai_from_store().await {
+        tracing::warn!("could not load persisted AI settings: {e}");
+    }
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -1285,6 +1335,114 @@ mod tests {
         assert!(ai.0.supported_providers.contains(&"vllm"));
         assert!(ai.0.supported_providers.contains(&"bedrock"));
         assert!(!ai.0.has_api_key);
+    }
+
+    #[tokio::test]
+    async fn ai_settings_are_runtime_editable_and_persist() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Disabled by default → no pipeline.
+        assert!(st.nl2sql_pipeline().is_none());
+
+        // Enable the mock provider at runtime — the pipeline is hot-swapped in
+        // with no restart, and a key is now recorded (redacted in the response).
+        let updated = update_ai_settings(
+            State(st.clone()),
+            hdr.clone(),
+            Json(UpdateAiSettingsRequest {
+                enabled: Some(true),
+                provider: Some("openrouter".into()),
+                model: Some("gpt-4o-mini".into()),
+                base_url: None,
+                api_key: Some("sk-secret".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(updated.0.enabled);
+        assert_eq!(updated.0.provider, "openrouter");
+        assert!(updated.0.has_api_key);
+        assert!(st.nl2sql_pipeline().is_some(), "pipeline hot-swapped in");
+
+        // An empty api_key on a later edit keeps the stored secret.
+        let _kept = update_ai_settings(
+            State(st.clone()),
+            hdr,
+            Json(UpdateAiSettingsRequest {
+                enabled: None,
+                provider: None,
+                model: Some("gpt-4o".into()),
+                base_url: None,
+                api_key: Some(String::new()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !st.ai_config().api_key.is_empty(),
+            "empty key keeps the secret"
+        );
+        assert_eq!(st.ai_config().model, "gpt-4o");
+
+        // Persistence: a fresh AppState over the SAME store reloads the edits,
+        // proving the settings survive a restart.
+        let st2 = AppState::new(AppConfig::default(), st.store.clone()).unwrap();
+        assert!(st2.nl2sql_pipeline().is_none(), "defaults before reload");
+        st2.reload_ai_from_store().await.unwrap();
+        let cfg = st2.ai_config();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.provider, "openrouter");
+        assert_eq!(cfg.model, "gpt-4o");
+        assert!(st2.nl2sql_pipeline().is_some());
+    }
+
+    #[tokio::test]
+    async fn dashboard_text_cards_round_trip() {
+        use gauss_core::domain::DashboardTextCard;
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+
+        let created = content::create_dashboard(
+            State(st.clone()),
+            bearer(&login.token),
+            Json(content::CreateDashboardRequest {
+                name: "Ops".into(),
+                collection_id: None,
+                card_ids: vec![],
+                parameters: vec![],
+                bindings: vec![],
+                layout: vec![],
+                links: vec![],
+                tabs: vec![],
+                text_cards: vec![DashboardTextCard {
+                    id: Uuid::new_v4(),
+                    markdown: "# Revenue\nUpdated nightly.".into(),
+                    w: 2,
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.0.text_cards.len(), 1);
+
+        // Read back via the list endpoint — the markdown panel persisted.
+        let all = content::list_dashboards(State(st)).await.unwrap();
+        let dash = all.0.iter().find(|d| d.id == created.0.id).unwrap();
+        assert_eq!(dash.text_cards.len(), 1);
+        assert!(dash.text_cards[0].markdown.contains("Revenue"));
+        assert_eq!(dash.text_cards[0].w, 2);
     }
 
     #[tokio::test]
@@ -1978,6 +2136,7 @@ mod tests {
             layout: vec![],
             links: vec![],
             tabs: vec![],
+            text_cards: vec![],
         };
         store
             .put_content(ContentRecord {
@@ -2049,6 +2208,7 @@ mod tests {
                 layout: vec![],
                 links: vec![],
                 tabs: vec![],
+                text_cards: vec![],
             }),
         )
         .await
@@ -2068,6 +2228,7 @@ mod tests {
                 layout: vec![CardLayout { card_id, w: 2 }],
                 links: vec![],
                 tabs: vec![],
+                text_cards: vec![],
             }),
         )
         .await

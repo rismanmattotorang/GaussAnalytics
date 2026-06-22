@@ -185,6 +185,13 @@ export interface DashboardTab {
   card_ids: string[];
 }
 
+/** A free-form Markdown panel on a dashboard (titles, notes, links). */
+export interface DashboardTextCard {
+  id: string;
+  markdown: string;
+  w?: number;
+}
+
 export interface Dashboard {
   id: string;
   name: string;
@@ -195,6 +202,7 @@ export interface Dashboard {
   layout?: CardLayout[];
   links?: string[];
   tabs?: DashboardTab[];
+  text_cards?: DashboardTextCard[];
 }
 
 export interface DashboardCardResult {
@@ -243,6 +251,16 @@ export const api = {
   deleteDatabase: (id: string, token: string) =>
     authed<{ deleted: string }>(`/databases/${id}`, "DELETE", token),
   aiSettings: (token: string) => authed<AiSettings>("/settings/ai", "GET", token),
+  updateAiSettings: (
+    body: {
+      enabled?: boolean;
+      provider?: string;
+      model?: string;
+      base_url?: string;
+      api_key?: string;
+    },
+    token: string,
+  ) => authed<AiSettings>("/settings/ai", "PUT", token, body),
   run: (database_id: string, query: Query) =>
     request<QueryResult>("/dataset/run", {
       method: "POST",
@@ -283,6 +301,7 @@ export const api = {
       bindings?: ParamBinding[];
       links?: string[];
       tabs?: DashboardTab[];
+      text_cards?: DashboardTextCard[];
     },
     token: string,
   ) => authed<Dashboard>("/dashboards", "POST", token, body),
@@ -301,6 +320,7 @@ export const api = {
       layout?: CardLayout[];
       links?: string[];
       tabs?: DashboardTab[];
+      text_cards?: DashboardTextCard[];
     },
     token: string,
   ) => authed<Dashboard>(`/dashboards/${id}`, "PUT", token, body),

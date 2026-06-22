@@ -62,8 +62,13 @@ GaussAnalytics does **not yet** match the reference platform's *breadth*:
   …) per demand behind the `Driver` trait.
 - **AI depth**: NL2SQL + MCP are integrated and governed, but multi-turn
   clarification, lineage, and chained MCP agent workflows are still ahead.
-- **Subscriptions/pulses** delivery matrix and **row-level sandboxing** are
-  scheduled.
+- **Subscriptions/pulses**: the scheduler now delivers query alerts and
+  subscription digests over **log, webhook, and email** channels (email via an
+  HTTP relay / transactional API). Per-recipient schedule management UI and a
+  broader **row-level sandboxing** model are still scheduled.
+- **Dashboard text/markdown cards** ✅ and **runtime-editable, persisted AI
+  settings** (provider/model/key edited in the UI, pipeline hot-swapped with no
+  restart) ✅ are now implemented. Deeper drill-through configuration is ahead.
 - A full **SBOM/`cargo deny` CI gate** is configured (`deny.toml`) but not yet
   wired as a required CI job.
 

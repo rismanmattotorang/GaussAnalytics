@@ -1,18 +1,44 @@
 //! Shared application state injected into every handler.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use gauss_config::{AppConfig, Nl2SqlConfig};
 use gauss_core::error::CoreError;
-use gauss_db::Store;
+use gauss_db::{ContentRecord, Store};
 use gauss_engine::traits::LlmService;
 use gauss_llm::{
     AnthropicLlmService, GeminiLlmService, MockLlmService, OllamaLlmService, OpenAiLlmService,
 };
 use gauss_mcp_gateway::McpGateway;
 use gauss_nl2sql::{LlmNl2Sql, Nl2SqlPipeline};
+use uuid::Uuid;
 
 use crate::cache::ResultCache;
+
+/// Reserved content kind + fixed id under which the live AI settings are
+/// persisted in the metadata store (so they survive restarts without a new
+/// table or migration).
+const AI_SETTINGS_KIND: &str = "app_setting";
+const AI_SETTINGS_ID: Uuid = Uuid::from_u128(0x9a55_0000_0000_4000_8000_0000_0000_a101);
+
+/// The live AI/NL2SQL state: the effective config plus the built pipeline.
+/// Held behind an `RwLock` so settings can be edited at runtime and the
+/// translation pipeline hot-swapped without restarting the server.
+pub struct AiState {
+    pub config: Nl2SqlConfig,
+    pub pipeline: Option<Arc<Nl2SqlPipeline<LlmNl2Sql>>>,
+}
+
+/// Build the pipeline for a config, or `None` when NL2SQL is disabled.
+fn build_pipeline(
+    cfg: &Nl2SqlConfig,
+) -> gauss_core::CoreResult<Option<Arc<Nl2SqlPipeline<LlmNl2Sql>>>> {
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    let llm = build_nl2sql_llm(cfg)?;
+    Ok(Some(Arc::new(Nl2SqlPipeline::new(LlmNl2Sql::new(llm)))))
+}
 
 /// Lightweight usage analytics: how many queries the instance has executed.
 #[derive(Default)]
@@ -42,8 +68,8 @@ pub struct AppState {
     pub usage: Arc<UsageStats>,
     /// Present only when the MCP integration is enabled in config.
     pub mcp: Option<Arc<dyn McpGateway>>,
-    /// Present only when the NL2SQL integration is enabled in config.
-    pub nl2sql: Option<Arc<Nl2SqlPipeline<LlmNl2Sql>>>,
+    /// Live, runtime-editable AI/NL2SQL state (config + hot-swappable pipeline).
+    pub ai: Arc<RwLock<AiState>>,
 }
 
 /// The LLM providers this build can drive for NL2SQL. OpenRouter, LiteLLM, and
@@ -161,12 +187,11 @@ impl AppState {
             None
         };
 
-        let nl2sql = if config.nl2sql.enabled {
-            let llm = build_nl2sql_llm(&config.nl2sql)?;
-            Some(Arc::new(Nl2SqlPipeline::new(LlmNl2Sql::new(llm))))
-        } else {
-            None
-        };
+        let pipeline = build_pipeline(&config.nl2sql)?;
+        let ai = Arc::new(RwLock::new(AiState {
+            config: config.nl2sql.clone(),
+            pipeline,
+        }));
 
         let cache = Arc::new(ResultCache::new(config.server.cache_ttl_secs));
 
@@ -176,8 +201,55 @@ impl AppState {
             cache,
             usage: Arc::new(UsageStats::default()),
             mcp,
-            nl2sql,
+            ai,
         })
+    }
+
+    /// The current NL2SQL pipeline (cloned out of the lock), if enabled.
+    pub fn nl2sql_pipeline(&self) -> Option<Arc<Nl2SqlPipeline<LlmNl2Sql>>> {
+        self.ai.read().expect("ai lock poisoned").pipeline.clone()
+    }
+
+    /// A snapshot of the effective AI configuration.
+    pub fn ai_config(&self) -> Nl2SqlConfig {
+        self.ai.read().expect("ai lock poisoned").config.clone()
+    }
+
+    /// Apply a new AI configuration at runtime: validate + build the pipeline,
+    /// persist the settings, then hot-swap them in. No restart required.
+    pub async fn update_ai(&self, cfg: Nl2SqlConfig) -> gauss_core::CoreResult<()> {
+        // Build first so an invalid config is rejected before we persist or swap.
+        let pipeline = build_pipeline(&cfg)?;
+        let body = serde_json::to_string(&cfg).map_err(|e| CoreError::Internal(e.to_string()))?;
+        self.store
+            .put_content(ContentRecord {
+                id: AI_SETTINGS_ID,
+                kind: AI_SETTINGS_KIND.into(),
+                collection_id: None,
+                name: "ai".into(),
+                body_json: body,
+                created_at: chrono::Utc::now(),
+            })
+            .await?;
+        let mut w = self.ai.write().expect("ai lock poisoned");
+        w.config = cfg;
+        w.pipeline = pipeline;
+        Ok(())
+    }
+
+    /// Load persisted AI settings (if any) and hot-swap them in. Called at
+    /// startup so runtime edits survive a restart.
+    pub async fn reload_ai_from_store(&self) -> gauss_core::CoreResult<()> {
+        let Some(rec) = self.store.get_content(AI_SETTINGS_ID).await? else {
+            return Ok(());
+        };
+        let cfg: Nl2SqlConfig =
+            serde_json::from_str(&rec.body_json).map_err(|e| CoreError::Storage(e.to_string()))?;
+        let pipeline = build_pipeline(&cfg)?;
+        let mut w = self.ai.write().expect("ai lock poisoned");
+        w.config = cfg;
+        w.pipeline = pipeline;
+        Ok(())
     }
 }
 
