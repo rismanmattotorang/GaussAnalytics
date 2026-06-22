@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="812" viewBox="0 0 1280 812"
+     font-family="-apple-system, 'Segoe UI', Roboto, 'DejaVu Sans', sans-serif">
+  <defs>
+    <radialGradient id="bg" cx="80%" cy="-10%" r="90%">
+      <stop offset="0%" stop-color="#1b2546"/>
+      <stop offset="100%" stop-color="#0b1020"/>
+    </radialGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#56c8fb"/>
+      <stop offset="100%" stop-color="#2f8fd6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="812" fill="url(#bg)"/>
+
+  <!-- Header -->
+  <text x="56" y="66" font-size="40" font-weight="700" fill="url(#brand)">GaussAnalytics</text>
+  <text x="58" y="92" font-size="15" fill="#8a93ab">Fast, secure, AI-native BI — by Gaussian Technologies</text>
+  <rect x="980" y="40" width="158" height="30" rx="15" fill="#14361f"/>
+  <circle cx="1000" cy="55" r="4" fill="#34d399"/>
+  <text x="1012" y="60" font-size="14" fill="#34d399">ok · v1.0.0</text>
+  <text x="1158" y="60" font-size="14" fill="#38bdf8">sign out</text>
+
+  <!-- Nav tabs -->
+  <g font-size="14.5" transform="translate(56,116)">
+    <rect x="0"   y="0" width="86"  height="30" rx="8" fill="#141a2e"/><text x="16"  y="20" fill="#8a93ab">Explore</text>
+    <rect x="94"  y="0" width="58"  height="30" rx="8" fill="#141a2e"/><text x="110" y="20" fill="#8a93ab">SQL</text>
+    <rect x="160" y="0" width="150" height="30" rx="8" fill="#141a2e"/><text x="176" y="20" fill="#8a93ab">Saved questions</text>
+    <rect x="318" y="0" width="112" height="30" rx="8" fill="#38bdf8"/><text x="334" y="20" fill="#042033" font-weight="600">Dashboards</text>
+    <rect x="438" y="0" width="104" height="30" rx="8" fill="#141a2e"/><text x="454" y="20" fill="#8a93ab">Notebooks</text>
+    <rect x="550" y="0" width="116" height="30" rx="8" fill="#141a2e"/><text x="566" y="20" fill="#8a93ab">Ask (NL2SQL)</text>
+    <rect x="674" y="0" width="120" height="30" rx="8" fill="#141a2e"/><text x="690" y="20" fill="#8a93ab">Data sources</text>
+    <rect x="802" y="0" width="80"  height="30" rx="8" fill="#141a2e"/><text x="818" y="20" fill="#8a93ab">Settings</text>
+  </g>
+
+  <!-- Panel -->
+  <rect x="56" y="172" width="1168" height="600" rx="14" fill="#141a2e" stroke="#262d45"/>
+
+  <text x="88" y="214" font-size="20" font-weight="600" fill="#e6e9f2">Revenue overview</text>
+  <text x="88" y="236" font-size="13.5" fill="#8a93ab">Click a category to cross-filter · drag tiles to reorder</text>
+
+  <!-- Filter bar -->
+  <g transform="translate(88,252)">
+    <rect x="0" y="0" width="1048" height="44" rx="8" fill="#0f1530"/>
+    <text x="16" y="20" font-size="11.5" fill="#8a93ab">REGION</text>
+    <rect x="16" y="24" width="150" height="2" fill="#26304d"/>
+    <text x="190" y="20" font-size="11.5" fill="#8a93ab">QUARTER</text>
+    <rect x="190" y="24" width="120" height="2" fill="#26304d"/>
+    <rect x="916" y="9" width="116" height="26" rx="7" fill="#38bdf8"/>
+    <text x="952" y="27" font-size="13.5" font-weight="600" fill="#042033">Apply</text>
+  </g>
+
+  <!-- Left tile: bar chart -->
+  <g transform="translate(88,316)">
+    <rect x="0" y="0" width="636" height="424" rx="10" fill="#0f1530" stroke="#212a44"/>
+    <text x="20" y="32" font-size="15" font-weight="600" fill="#e6e9f2">Revenue by region</text>
+
+    <!-- axis -->
+    <line x1="70" y1="64" x2="70" y2="356" stroke="#2b3450"/>
+    <line x1="70" y1="356" x2="600" y2="356" stroke="#2b3450"/>
+    <g font-size="11" fill="#6b7392">
+      <text x="38" y="70">1.0M</text><line x1="70" y1="64" x2="600" y2="64" stroke="#1b2238"/>
+      <text x="38" y="142">0.75M</text><line x1="70" y1="137" x2="600" y2="137" stroke="#1b2238"/>
+      <text x="38" y="215">0.5M</text><line x1="70" y1="210" x2="600" y2="210" stroke="#1b2238"/>
+      <text x="38" y="288">0.25M</text><line x1="70" y1="283" x2="600" y2="283" stroke="#1b2238"/>
+    </g>
+    <!-- bars -->
+    <g>
+      <rect x="110" y="84"  width="64" height="272" rx="4" fill="url(#bar)"/>
+      <rect x="206" y="140" width="64" height="216" rx="4" fill="url(#bar)"/>
+      <rect x="302" y="196" width="64" height="160" rx="4" fill="url(#bar)"/>
+      <rect x="398" y="246" width="64" height="110" rx="4" fill="url(#bar)"/>
+      <rect x="494" y="286" width="64" height="70"  rx="4" fill="url(#bar)"/>
+    </g>
+    <g font-size="12" fill="#8a93ab" text-anchor="middle">
+      <text x="142" y="378">West</text>
+      <text x="238" y="378">East</text>
+      <text x="334" y="378">North</text>
+      <text x="430" y="378">South</text>
+      <text x="526" y="378">Intl</text>
+    </g>
+  </g>
+
+  <!-- Right column: big number -->
+  <g transform="translate(740,316)">
+    <rect x="0" y="0" width="396" height="120" rx="10" fill="#0f1530" stroke="#212a44"/>
+    <text x="20" y="30" font-size="13" font-weight="600" fill="#e6e9f2">Total revenue</text>
+    <text x="20" y="86" font-size="44" font-weight="700" fill="#e6e9f2">$2.84M</text>
+    <text x="300" y="86" font-size="14" fill="#34d399">▲ 12%</text>
+  </g>
+
+  <!-- Right column: table tile -->
+  <g transform="translate(740,452)">
+    <rect x="0" y="0" width="396" height="288" rx="10" fill="#0f1530" stroke="#212a44"/>
+    <text x="20" y="30" font-size="15" font-weight="600" fill="#e6e9f2">Top regions</text>
+    <g font-size="12.5">
+      <text x="20"  y="60" fill="#8a93ab">REGION</text>
+      <text x="300" y="60" fill="#8a93ab">REVENUE</text>
+      <line x1="20" y1="70" x2="376" y2="70" stroke="#212a44"/>
+      <text x="20" y="98"  fill="#e6e9f2">West</text>      <text x="300" y="98"  fill="#e6e9f2">$0.98M</text>
+      <line x1="20" y1="110" x2="376" y2="110" stroke="#171e34"/>
+      <text x="20" y="136" fill="#e6e9f2">East</text>      <text x="300" y="136" fill="#e6e9f2">$0.74M</text>
+      <line x1="20" y1="148" x2="376" y2="148" stroke="#171e34"/>
+      <text x="20" y="174" fill="#e6e9f2">North</text>     <text x="300" y="174" fill="#e6e9f2">$0.55M</text>
+      <line x1="20" y1="186" x2="376" y2="186" stroke="#171e34"/>
+      <text x="20" y="212" fill="#e6e9f2">South</text>     <text x="300" y="212" fill="#e6e9f2">$0.38M</text>
+      <line x1="20" y1="224" x2="376" y2="224" stroke="#171e34"/>
+      <text x="20" y="250" fill="#e6e9f2">International</text><text x="300" y="250" fill="#e6e9f2">$0.19M</text>
+    </g>
+  </g>
+</svg>
