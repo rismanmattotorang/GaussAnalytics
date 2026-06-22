@@ -311,6 +311,33 @@ pub struct DashboardTextCard {
     pub w: u8,
 }
 
+/// A dashboard tile backed by a **notebook cell's output** — a chart, big
+/// number, table, or image computed in Python/SQL/ML on the user's kernel and
+/// pinned here. The rendered output is stored as a JSON `snapshot`, refreshed on
+/// publish and (optionally) on a schedule, so the dashboard renders without a
+/// live kernel. This is GaussAnalytics-only: a dashboard tile whose value is an
+/// arbitrary computed notebook result, not just a SQL query.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DashboardNotebookCard {
+    pub id: Uuid,
+    pub notebook_id: Uuid,
+    pub cell_id: Uuid,
+    pub title: String,
+    /// Render hint for the snapshot: `chart` | `big_number` | `table` | `image`.
+    pub view: String,
+    /// JSON snapshot of the cell's last output. Shape:
+    /// `{ "result"?: {columns, rows}, "image"?: "<base64 png>", "html"?: ...,
+    /// "text"?: ..., "sql"?: ... }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
+    /// Column span (1 = half width, 2 = full), matching [`CardLayout`].
+    #[serde(default = "default_width")]
+    pub w: u8,
+    /// When the snapshot was last refreshed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refreshed_at: Option<DateTime<Utc>>,
+}
+
 /// A dashboard arranges cards for at-a-glance consumption, optionally with
 /// shared filter parameters that apply across its cards and a saved layout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -335,6 +362,9 @@ pub struct Dashboard {
     /// Free-form Markdown panels (titles, notes, links) shown alongside cards.
     #[serde(default)]
     pub text_cards: Vec<DashboardTextCard>,
+    /// Tiles backed by notebook-cell outputs (computed charts/numbers/tables).
+    #[serde(default)]
+    pub notebook_cards: Vec<DashboardNotebookCard>,
 }
 
 /// The kind of a notebook cell.

@@ -125,6 +125,8 @@ pub fn router(state: AppState) -> Router {
             "/notebooks/{id}/run-order",
             post(content::notebook_run_order),
         )
+        .route("/notebooks/{id}/publish", post(content::notebook_publish))
+        .route("/dashboards/{id}/refresh", post(content::refresh_dashboard))
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
         .route("/usage", get(usage_stats))
@@ -1235,8 +1237,20 @@ pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
         tracing::info!("ensured administrator account for {email}");
     }
 
-    // Background scheduler: periodically refresh connected sources' schemas.
+    // Capture scheduler-relevant config before it is moved into the state.
     let period_secs = config.server.scheduler_period_secs;
+    let notebook_refresh_secs = config.jupyter.refresh_secs;
+    let jupyter_enabled = config.jupyter.enabled;
+
+    let state = AppState::new(config, store.clone())?;
+    // Apply any AI settings edited at runtime in a prior run (persisted).
+    if let Err(e) = state.reload_ai_from_store().await {
+        tracing::warn!("could not load persisted AI settings: {e}");
+    }
+
+    // Background scheduler: refresh connected sources' schemas, and (when the
+    // notebook integration is enabled and a refresh interval is set) refresh
+    // published notebook dashboard cards by re-running their notebooks.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler_handle = if period_secs > 0 {
         let mut scheduler = gauss_scheduler::Scheduler::new();
@@ -1248,17 +1262,22 @@ pub async fn serve(config: AppConfig) -> Result<(), BoxError> {
                 store: store.clone(),
             }),
         );
+        if jupyter_enabled && notebook_refresh_secs > 0 {
+            scheduler.every(
+                "refresh-notebook-cards",
+                chrono::Duration::seconds(notebook_refresh_secs as i64),
+                Utc::now(),
+                Arc::new(jobs::NotebookRefreshJob {
+                    state: state.clone(),
+                }),
+            );
+        }
         let period = std::time::Duration::from_secs(period_secs);
         Some(tokio::spawn(scheduler.run(period, shutdown_rx)))
     } else {
         None
     };
 
-    let state = AppState::new(config, store)?;
-    // Apply any AI settings edited at runtime in a prior run (persisted).
-    if let Err(e) = state.reload_ai_from_store().await {
-        tracing::warn!("could not load persisted AI settings: {e}");
-    }
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -1700,6 +1719,80 @@ mod tests {
         )
         .await;
         match err {
+            Err(e) => assert!(e.0.to_string().contains("not enabled"), "{}", e.0),
+            Ok(_) => panic!("expected an error when Jupyter is disabled"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_notebook_card_and_refresh_dashboard() {
+        // CRUD + refresh work without Jupyter; publishing (which runs the kernel)
+        // errors cleanly when the integration is disabled.
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        let nb = content::create_notebook(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::SaveNotebookRequest {
+                name: "NB".into(),
+                collection_id: None,
+                cells: vec![gauss_core::domain::NotebookCell {
+                    id: Uuid::new_v4(),
+                    kind: gauss_core::domain::CellKind::Python,
+                    source: "x = 1".into(),
+                    database_id: None,
+                    output_var: None,
+                    input_var: None,
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        let dash = content::create_dashboard(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::CreateDashboardRequest {
+                name: "Board".into(),
+                collection_id: None,
+                card_ids: vec![],
+                parameters: vec![],
+                bindings: vec![],
+                layout: vec![],
+                links: vec![],
+                tabs: vec![],
+                text_cards: vec![],
+            }),
+        )
+        .await
+        .unwrap();
+
+        // Refreshing a board with no notebook cards is a no-op (no kernel needed).
+        let refreshed = content::refresh_dashboard(State(st.clone()), Path(dash.0.id), hdr.clone())
+            .await
+            .unwrap();
+        assert_eq!(refreshed.0["refreshed"], 0);
+
+        // Publishing needs to run the kernel; with Jupyter disabled it errors.
+        let published = content::notebook_publish(
+            State(st.clone()),
+            Path(nb.0.id),
+            hdr,
+            Json(content::PublishRequest {
+                cell_id: nb.0.cells[0].id,
+                dashboard_id: dash.0.id,
+                title: Some("Tile".into()),
+                view: None,
+            }),
+        )
+        .await;
+        match published {
             Err(e) => assert!(e.0.to_string().contains("not enabled"), "{}", e.0),
             Ok(_) => panic!("expected an error when Jupyter is disabled"),
         }
@@ -2397,6 +2490,7 @@ mod tests {
             links: vec![],
             tabs: vec![],
             text_cards: vec![],
+            notebook_cards: vec![],
         };
         store
             .put_content(ContentRecord {

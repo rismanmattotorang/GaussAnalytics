@@ -192,6 +192,28 @@ export interface DashboardTextCard {
   w?: number;
 }
 
+/** A snapshot of a published notebook cell's output (parsed from the card's
+ * JSON `snapshot`). */
+export interface NotebookCardSnapshot {
+  result?: QueryResult;
+  image?: string;
+  html?: string;
+  text?: string;
+  sql?: string;
+}
+
+/** A dashboard tile backed by a computed notebook-cell output. */
+export interface DashboardNotebookCard {
+  id: string;
+  notebook_id: string;
+  cell_id: string;
+  title: string;
+  view: string;
+  snapshot?: string | null;
+  w?: number;
+  refreshed_at?: string | null;
+}
+
 export interface Dashboard {
   id: string;
   name: string;
@@ -203,6 +225,7 @@ export interface Dashboard {
   links?: string[];
   tabs?: DashboardTab[];
   text_cards?: DashboardTextCard[];
+  notebook_cards?: DashboardNotebookCard[];
 }
 
 export interface DashboardCardResult {
@@ -424,4 +447,11 @@ export const api = {
       cells,
       changed,
     }),
+  publishCell: (
+    notebookId: string,
+    body: { cell_id: string; dashboard_id: string; title?: string; view?: string },
+    token: string,
+  ) => authed<Dashboard>(`/notebooks/${notebookId}/publish`, "POST", token, body),
+  refreshDashboard: (id: string, token: string) =>
+    authed<{ refreshed: number }>(`/dashboards/${id}/refresh`, "POST", token),
 };

@@ -12,8 +12,8 @@ use axum::Json;
 use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
-    Card, CardLayout, CellKind, Collection, Dashboard, DashboardParameter, DashboardTab,
-    DashboardTextCard, Notebook, NotebookCell, ParamBinding, ParamKind, RlsPolicy,
+    Card, CardLayout, CellKind, Collection, Dashboard, DashboardNotebookCard, DashboardParameter,
+    DashboardTab, DashboardTextCard, Notebook, NotebookCell, ParamBinding, ParamKind, RlsPolicy,
 };
 use gauss_core::error::CoreError;
 use gauss_core::gql::{CompareOp, Filter, Literal, Query};
@@ -223,6 +223,8 @@ pub async fn create_dashboard(
         links: req.links,
         tabs: req.tabs,
         text_cards: req.text_cards,
+        // Notebook cards are added via the publish endpoint, not the editor.
+        notebook_cards: vec![],
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))
@@ -251,6 +253,11 @@ pub async fn update_dashboard(
     Json(req): Json<CreateDashboardRequest>,
 ) -> Result<Json<Dashboard>, ApiError> {
     require_create(&st, &headers).await?;
+    // The editor doesn't manage notebook cards; preserve any already pinned.
+    let notebook_cards = load_dashboard(&st, id)
+        .await
+        .map(|d| d.notebook_cards)
+        .unwrap_or_default();
     let dash = Dashboard {
         id,
         name: req.name,
@@ -262,6 +269,7 @@ pub async fn update_dashboard(
         links: req.links,
         tabs: req.tabs,
         text_cards: req.text_cards,
+        notebook_cards,
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))
@@ -273,17 +281,21 @@ pub async fn list_dashboards(State(st): State<AppState>) -> Result<Json<Vec<Dash
     )?))
 }
 
-pub async fn get_dashboard(
-    State(st): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<Dashboard>, ApiError> {
+async fn load_dashboard(st: &AppState, id: Uuid) -> Result<Dashboard, ApiError> {
     let rec = st
         .store
         .get_content(id)
         .await?
         .filter(|r| r.kind == KIND_DASHBOARD)
         .ok_or_else(|| CoreError::NotFound(format!("dashboard {id}")))?;
-    Ok(Json(parse_one(&rec)?))
+    parse_one(&rec)
+}
+
+pub async fn get_dashboard(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Dashboard>, ApiError> {
+    Ok(Json(load_dashboard(&st, id).await?))
 }
 
 pub async fn delete_dashboard(
@@ -748,24 +760,45 @@ pub async fn notebook_run(
     require_create(&st, &headers).await?;
     let gw = st.kernel_gateway()?;
     let kernel_id = ensure_kernel(&st, id).await?;
-    let cell = req.cell;
+    let run = execute_cell(&st, &headers, gw.as_ref(), &kernel_id, &req.cell).await?;
+    Ok(Json(RunCellResponse {
+        kernel_id,
+        outputs: run.outputs,
+        sql: run.sql,
+        preview: run.preview,
+    }))
+}
 
-    let mut resp = RunCellResponse {
-        kernel_id: kernel_id.clone(),
+/// The result of executing one cell on a kernel.
+struct CellRun {
+    outputs: Vec<gauss_notebook::CellOutput>,
+    sql: Option<String>,
+    preview: Option<gauss_drivers::QueryResult>,
+}
+
+/// Execute a single cell on `kernel_id`, dispatching by kind (see
+/// [`notebook_run`]). Shared by the run endpoint and the publish/refresh paths.
+async fn execute_cell(
+    st: &AppState,
+    headers: &HeaderMap,
+    gw: &gauss_notebook::KernelGateway,
+    kernel_id: &str,
+    cell: &NotebookCell,
+) -> Result<CellRun, ApiError> {
+    let mut run = CellRun {
         outputs: Vec::new(),
         sql: None,
         preview: None,
     };
-
     match cell.kind {
         CellKind::Markdown => {}
         CellKind::Python => {
-            resp.outputs = gw.execute_collect(&kernel_id, &cell.source).await?;
+            run.outputs = gw.execute_collect(kernel_id, &cell.source).await?;
         }
         CellKind::Input => {
             let var = valid_ident(cell.input_var.as_deref().unwrap_or_default())?;
             let code = inject_value_code(&var, &cell.source);
-            resp.outputs = gw.execute_collect(&kernel_id, &code).await?;
+            run.outputs = gw.execute_collect(kernel_id, &code).await?;
         }
         CellKind::Sql | CellKind::Nl2sql => {
             let db_id = cell.database_id.ok_or_else(|| {
@@ -775,17 +808,17 @@ pub async fn notebook_run(
             let sql = if cell.kind == CellKind::Sql {
                 cell.source.clone()
             } else {
-                crate::translate_to_sql(&st, db_id, cell.source.clone(), Vec::new())
+                crate::translate_to_sql(st, db_id, cell.source.clone(), Vec::new())
                     .await?
                     .sql
             };
             // Governed execution (ReadDatabase + read-only guard + pooled conn).
-            let result = crate::run_guarded_sql(&st, &headers, db_id, &sql, &[]).await?;
+            let result = crate::run_guarded_sql(st, headers, db_id, &sql, &[]).await?;
             let var = valid_ident(cell.output_var.as_deref().unwrap_or("df"))?;
             let code = inject_dataframe_code(&var, &result);
-            resp.outputs = gw.execute_collect(&kernel_id, &code).await?;
-            resp.sql = Some(sql);
-            resp.preview = Some(result);
+            run.outputs = gw.execute_collect(kernel_id, &code).await?;
+            run.sql = Some(sql);
+            run.preview = Some(result);
         }
         CellKind::Chart | CellKind::BigNumber => {
             // Fetch the referenced DataFrame from the kernel; the web UI renders
@@ -793,14 +826,211 @@ pub async fn notebook_run(
             // undefined) surface as outputs instead of a preview.
             let var = valid_ident(cell.input_var.as_deref().unwrap_or("df"))?;
             let code = fetch_dataframe_code(&var);
-            let outputs = gw.execute_collect(&kernel_id, &code).await?;
+            let outputs = gw.execute_collect(kernel_id, &code).await?;
             match parse_dataframe_outputs(&outputs) {
-                Some(preview) => resp.preview = Some(preview),
-                None => resp.outputs = outputs,
+                Some(preview) => run.preview = Some(preview),
+                None => run.outputs = outputs,
             }
         }
     }
-    Ok(Json(resp))
+    Ok(run)
+}
+
+// --- Publish to dashboard + scheduled refresh ----------------------------
+
+/// Default render hint for a cell kind when publishing.
+fn default_view(kind: CellKind) -> String {
+    match kind {
+        CellKind::Chart => "chart",
+        CellKind::BigNumber => "big_number",
+        _ => "table",
+    }
+    .to_string()
+}
+
+/// Serialize a [`CellRun`] into the JSON snapshot stored on a dashboard card:
+/// `{ result?, sql?, image?, html?, text? }`.
+fn build_snapshot(run: &CellRun) -> String {
+    let mut obj = serde_json::Map::new();
+    if let Some(p) = &run.preview {
+        obj.insert(
+            "result".into(),
+            serde_json::json!({ "columns": p.columns, "rows": p.rows }),
+        );
+    }
+    if let Some(sql) = &run.sql {
+        obj.insert("sql".into(), serde_json::json!(sql));
+    }
+    let mut image: Option<String> = None;
+    let mut html: Option<String> = None;
+    let mut text = String::new();
+    for o in &run.outputs {
+        match o {
+            gauss_notebook::CellOutput::Data { data } => {
+                if image.is_none() {
+                    if let Some(png) = data.get("image/png").and_then(|v| v.as_str()) {
+                        image = Some(png.to_string());
+                    }
+                }
+                if html.is_none() {
+                    if let Some(h) = data.get("text/html").and_then(|v| v.as_str()) {
+                        html = Some(h.to_string());
+                    }
+                }
+                if let Some(plain) = data.get("text/plain").and_then(|v| v.as_str()) {
+                    text.push_str(plain);
+                }
+            }
+            gauss_notebook::CellOutput::Stream { text: t, .. } => text.push_str(t),
+            gauss_notebook::CellOutput::Error { ename, evalue, .. } => {
+                text.push_str(&format!("{ename}: {evalue}"));
+            }
+        }
+    }
+    if let Some(img) = image {
+        obj.insert("image".into(), serde_json::json!(img));
+    }
+    if let Some(h) = html {
+        obj.insert("html".into(), serde_json::json!(h));
+    }
+    if !obj.contains_key("result") && !obj.contains_key("image") && !text.trim().is_empty() {
+        obj.insert("text".into(), serde_json::json!(text));
+    }
+    serde_json::Value::Object(obj).to_string()
+}
+
+/// Run the whole notebook in dependency order (so the target cell's inputs
+/// exist), then snapshot the target cell's output. Returns `(snapshot, kind)`.
+async fn snapshot_cell(
+    st: &AppState,
+    headers: &HeaderMap,
+    notebook: &Notebook,
+    cell_id: Uuid,
+) -> Result<String, ApiError> {
+    let gw = st.kernel_gateway()?;
+    let kernel_id = ensure_kernel(st, notebook.id).await?;
+    let specs: Vec<_> = notebook.cells.iter().map(cell_spec).collect();
+    let order = gauss_notebook::dag::topo_order(&specs)?;
+    let mut target: Option<CellRun> = None;
+    for id in order {
+        if let Some(cell) = notebook.cells.iter().find(|c| c.id == id) {
+            let run = execute_cell(st, headers, gw.as_ref(), &kernel_id, cell).await?;
+            if cell.id == cell_id {
+                target = Some(run);
+            }
+        }
+    }
+    let run = target.ok_or_else(|| CoreError::NotFound(format!("cell {cell_id}")))?;
+    Ok(build_snapshot(&run))
+}
+
+#[derive(Deserialize)]
+pub struct PublishRequest {
+    pub cell_id: Uuid,
+    pub dashboard_id: Uuid,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub view: Option<String>,
+}
+
+/// Pin a notebook cell's output onto a dashboard as a [`DashboardNotebookCard`].
+/// Runs the notebook to produce a fresh snapshot; re-publishing the same cell
+/// updates the existing card in place.
+pub async fn notebook_publish(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(req): Json<PublishRequest>,
+) -> Result<Json<Dashboard>, ApiError> {
+    require_create(&st, &headers).await?;
+    let notebook = load_notebook(&st, id).await?;
+    let cell = notebook
+        .cells
+        .iter()
+        .find(|c| c.id == req.cell_id)
+        .ok_or_else(|| CoreError::NotFound(format!("cell {}", req.cell_id)))?
+        .clone();
+
+    let view = req
+        .view
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default_view(cell.kind));
+    let title = req
+        .title
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| notebook.name.clone());
+    let snapshot = snapshot_cell(&st, &headers, &notebook, cell.id).await?;
+
+    let mut dash = load_dashboard(&st, req.dashboard_id).await?;
+    let now = Utc::now();
+    if let Some(existing) = dash
+        .notebook_cards
+        .iter_mut()
+        .find(|c| c.notebook_id == notebook.id && c.cell_id == cell.id)
+    {
+        existing.title = title;
+        existing.view = view;
+        existing.snapshot = Some(snapshot);
+        existing.refreshed_at = Some(now);
+    } else {
+        dash.notebook_cards.push(DashboardNotebookCard {
+            id: Uuid::new_v4(),
+            notebook_id: notebook.id,
+            cell_id: cell.id,
+            title,
+            view,
+            snapshot: Some(snapshot),
+            w: 1,
+            refreshed_at: Some(now),
+        });
+    }
+    persist_dashboard(&st, &dash).await?;
+    Ok(Json(dash))
+}
+
+/// Re-run the source notebooks of a dashboard's notebook cards and refresh their
+/// snapshots. Returns how many cards were refreshed. Best-effort per card.
+pub(crate) async fn refresh_dashboard_notebooks(
+    st: &AppState,
+    headers: &HeaderMap,
+    dashboard_id: Uuid,
+) -> Result<usize, ApiError> {
+    let mut dash = load_dashboard(st, dashboard_id).await?;
+    if dash.notebook_cards.is_empty() {
+        return Ok(0);
+    }
+    let now = Utc::now();
+    let mut refreshed = 0;
+    for i in 0..dash.notebook_cards.len() {
+        let (nb_id, cell_id) = (
+            dash.notebook_cards[i].notebook_id,
+            dash.notebook_cards[i].cell_id,
+        );
+        let Ok(notebook) = load_notebook(st, nb_id).await else {
+            continue;
+        };
+        if let Ok(snapshot) = snapshot_cell(st, headers, &notebook, cell_id).await {
+            dash.notebook_cards[i].snapshot = Some(snapshot);
+            dash.notebook_cards[i].refreshed_at = Some(now);
+            refreshed += 1;
+        }
+    }
+    if refreshed > 0 {
+        persist_dashboard(st, &dash).await?;
+    }
+    Ok(refreshed)
+}
+
+/// Manually refresh a dashboard's notebook cards (admin/editor).
+pub async fn refresh_dashboard(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_create(&st, &headers).await?;
+    let refreshed = refresh_dashboard_notebooks(&st, &headers, id).await?;
+    Ok(Json(serde_json::json!({ "refreshed": refreshed })))
 }
 
 // --- Reactive run order (dependency DAG) ---------------------------------
@@ -1204,5 +1434,60 @@ mod notebook_codegen_tests {
         let order = gauss_notebook::dag::topo_order(&specs).unwrap();
         let pos = |id| order.iter().position(|x| *x == id).unwrap();
         assert!(pos(sql.id) < pos(chart.id));
+    }
+
+    #[test]
+    fn default_view_follows_cell_kind() {
+        assert_eq!(default_view(CellKind::Chart), "chart");
+        assert_eq!(default_view(CellKind::BigNumber), "big_number");
+        assert_eq!(default_view(CellKind::Sql), "table");
+        assert_eq!(default_view(CellKind::Python), "table");
+    }
+
+    #[test]
+    fn snapshot_captures_result_image_and_text() {
+        // A data cell's preview becomes the snapshot's `result`.
+        let run = CellRun {
+            outputs: vec![],
+            sql: Some("select 1".into()),
+            preview: Some(gauss_drivers::QueryResult {
+                columns: vec!["n".into()],
+                rows: vec![vec![serde_json::json!(1)]],
+            }),
+        };
+        let snap: serde_json::Value = serde_json::from_str(&build_snapshot(&run)).unwrap();
+        assert_eq!(snap["result"]["columns"][0], "n");
+        assert_eq!(snap["sql"], "select 1");
+
+        // A Python cell that emits an image and stdout captures the image.
+        let mut data = serde_json::Map::new();
+        data.insert("image/png".into(), serde_json::json!("BASE64PNG"));
+        let run = CellRun {
+            outputs: vec![
+                gauss_notebook::CellOutput::Stream {
+                    name: "stdout".into(),
+                    text: "trained\n".into(),
+                },
+                gauss_notebook::CellOutput::Data { data },
+            ],
+            sql: None,
+            preview: None,
+        };
+        let snap: serde_json::Value = serde_json::from_str(&build_snapshot(&run)).unwrap();
+        assert_eq!(snap["image"], "BASE64PNG");
+        // With an image present, text is not duplicated into the snapshot.
+        assert!(snap.get("text").is_none());
+
+        // A plain-text Python cell (no result/image) captures `text`.
+        let run = CellRun {
+            outputs: vec![gauss_notebook::CellOutput::Stream {
+                name: "stdout".into(),
+                text: "hello".into(),
+            }],
+            sql: None,
+            preview: None,
+        };
+        let snap: serde_json::Value = serde_json::from_str(&build_snapshot(&run)).unwrap();
+        assert_eq!(snap["text"], "hello");
     }
 }

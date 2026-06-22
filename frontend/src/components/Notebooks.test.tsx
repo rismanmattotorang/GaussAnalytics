@@ -6,8 +6,10 @@ import { api, type Notebook } from "../api/client";
 vi.mock("../api/client", () => ({
   api: {
     notebooks: vi.fn(),
+    dashboards: vi.fn(),
     runCell: vi.fn(),
     runOrder: vi.fn(),
+    publishCell: vi.fn(),
     startKernel: vi.fn(),
     stopKernel: vi.fn(),
     updateNotebook: vi.fn(),
@@ -29,6 +31,7 @@ const sample: Notebook = {
 beforeEach(() => {
   vi.clearAllMocks();
   (api.notebooks as ReturnType<typeof vi.fn>).mockResolvedValue([sample]);
+  (api.dashboards as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 });
 
 afterEach(cleanup);
@@ -134,6 +137,33 @@ describe("Notebooks", () => {
       expect(api.runCell).toHaveBeenCalledWith(
         "nb-1",
         expect.objectContaining({ id: "c2" }),
+        "admin",
+      ),
+    );
+  });
+
+  it("publishes a cell to a chosen dashboard", async () => {
+    (api.dashboards as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "d1", name: "Ops", card_ids: [] },
+    ]);
+    (api.publishCell as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "d1",
+      name: "Ops",
+      card_ids: [],
+    });
+    render(<Notebooks token="admin" databases={[]} />);
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+
+    // Pick a publish target, then publish the python cell.
+    fireEvent.change(screen.getByRole("combobox", { name: "publish target" }), {
+      target: { value: "d1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(api.publishCell).toHaveBeenCalledWith(
+        "nb-1",
+        expect.objectContaining({ cell_id: "c2", dashboard_id: "d1" }),
         "admin",
       ),
     );

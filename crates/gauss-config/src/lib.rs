@@ -86,6 +86,11 @@ pub struct JupyterConfig {
     pub url: String,
     /// Jupyter Server token (empty for token-less local servers).
     pub token: String,
+    /// How often (seconds) to refresh published notebook dashboard cards by
+    /// re-running their source notebooks. `0` disables scheduled refresh (cards
+    /// still refresh on publish and via the manual refresh endpoint).
+    #[serde(default)]
+    pub refresh_secs: u64,
 }
 
 /// Settings for the in-house NL2SQL engine.
@@ -149,6 +154,7 @@ impl Default for AppConfig {
                 enabled: false,
                 url: "http://127.0.0.1:8888".into(),
                 token: String::new(),
+                refresh_secs: 0,
             },
         }
     }
@@ -241,6 +247,9 @@ impl AppConfig {
         }
         if let Some(v) = get("GAUSS_JUPYTER_TOKEN") {
             cfg.jupyter.token = v;
+        }
+        if let Some(v) = get("GAUSS_JUPYTER_REFRESH_SECS") {
+            cfg.jupyter.refresh_secs = parse(&v, "GAUSS_JUPYTER_REFRESH_SECS")?;
         }
 
         Ok(cfg)

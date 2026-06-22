@@ -85,6 +85,31 @@ impl Job for RefreshJob {
     }
 }
 
+/// Periodically refresh every dashboard's published notebook cards by re-running
+/// their source notebooks against the local Jupyter kernel. Scheduled only when
+/// the notebook integration is enabled and `jupyter.refresh_secs > 0`.
+pub struct NotebookRefreshJob {
+    pub state: crate::state::AppState,
+}
+
+#[async_trait]
+impl Job for NotebookRefreshJob {
+    fn name(&self) -> &str {
+        "refresh-notebook-cards"
+    }
+    async fn run(&self) -> CoreResult<()> {
+        // No principal for scheduled work; SQL cells run via the same governed
+        // path as a tokenless request (read-only-guarded).
+        let headers = axum::http::HeaderMap::new();
+        for rec in self.state.store.list_content("dashboard").await? {
+            // Best-effort: one dashboard failing must not abort the sweep.
+            let _ =
+                crate::content::refresh_dashboard_notebooks(&self.state, &headers, rec.id).await;
+        }
+        Ok(())
+    }
+}
+
 /// Run a query and notify when it returns at least `min_rows` rows.
 pub struct AlertJob {
     pub name: String,

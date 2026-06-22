@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** N0–N3 delivered · N4–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** N0–N4 delivered · N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -154,8 +154,17 @@ permissions/`CreateContent`, and appear in export/import.
   **rejects cycles**, and `downstream` gives the minimal re-run set. The server exposes
   `POST /api/notebooks/{id}/run-order`; the UI's **Run all** executes in topological
   order and **Run ↓** re-runs a cell plus its transitive dependents.
-- **N4 — Dashboards & schedule:** publish block outputs as dashboard cards; scheduled
-  notebook runs refresh them (`gauss-scheduler`).
+- **N4 — Dashboards & schedule ✅ delivered:** a notebook cell's output is pinned onto
+  a dashboard as a **`DashboardNotebookCard`** via `POST /api/notebooks/{id}/publish`.
+  Publishing runs the notebook in dependency order, snapshots the target cell
+  (`{ result | image | html | text | sql }`), and stores it on the dashboard so it
+  renders **without a live kernel** — a chart (nivo via `ResultView`), a big number, a
+  table, or a matplotlib image. `POST /api/dashboards/{id}/refresh` re-runs the source
+  notebooks and updates snapshots; a `NotebookRefreshJob` on `gauss-scheduler` does the
+  same on an interval (`GAUSS_JUPYTER_REFRESH_SECS`, off by default). This makes
+  dashboard tiles backed by **arbitrary computed Python/ML results** — something the
+  reference platform cannot do (see `docs/COMPARISON.md`). Editor updates preserve
+  pinned notebook cards.
 - **N5 — Interop & scale:** `.ipynb` import/export (`@deepnote/convert`); in-notebook
   **AI agent** (reuse `gauss-engine` + tools); optional **server-side sandboxed
   kernels** (containers) for hosted/multi-user deployments.
