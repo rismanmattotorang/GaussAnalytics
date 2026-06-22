@@ -35,6 +35,21 @@ The Rust server serves `frontend/dist` as static assets in production (set via
   mirror the Rust server. Start here when wiring a new screen.
 - `src/App.tsx` — application shell.
 - `src/styles.css` — base styling/theme.
+- `src/lib/viz.ts` — pure, unit-tested helpers that detect a result's shape and
+  reshape rows into chart data (no DOM, no chart library).
+- `src/components/charts/NivoCharts.tsx` — the charting layer, built on
+  [**nivo**](https://nivo.rocks) (D3-powered React charts). Themed wrappers for
+  bar, line/area, scatter, pie, and combo; `ResultView` chooses among them via
+  the chart-type picker. The library is isolated here, so swapping or extending
+  charts touches one file.
+
+## Charts
+
+Result and dashboard charts use **nivo** (`@nivo/bar|line|pie|scatterplot`):
+responsive, with tooltips, legends, axis titles, animation, and
+click-to-cross-filter on categorical charts. The viz code is code-split into its
+own bundle chunk (see `vite.config.ts` `manualChunks`) so the app shell loads
+fast.
 
 As Phase 2+ lands, the query builder, visualizations, dashboards, and admin
 screens are built on top of this typed client.

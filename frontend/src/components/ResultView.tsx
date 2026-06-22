@@ -7,42 +7,16 @@ import {
   isComboable,
   isPivotable,
   isScatterable,
-  linePoints,
-  pieSlices,
   pivot,
-  scatterPoints,
   type ChartKind,
 } from "../lib/viz";
-
-function ComboChart({ result }: { result: QueryResult }) {
-  const { labels, bars, line } = comboData(result);
-  const w = 600;
-  const h = 180;
-  const max = Math.max(1, ...bars, ...line);
-  const bw = labels.length > 0 ? w / labels.length : w;
-  return (
-    <svg className="linechart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      {bars.map((v, i) => (
-        <rect
-          key={i}
-          x={i * bw + bw * 0.15}
-          y={h - (v / max) * h}
-          width={bw * 0.7}
-          height={(v / max) * h}
-          fill="rgba(56,189,248,0.55)"
-        />
-      ))}
-      <polyline
-        points={line
-          .map((v, i) => `${(i * bw + bw / 2).toFixed(1)},${(h - (v / max) * h).toFixed(1)}`)
-          .join(" ")}
-        fill="none"
-        stroke="#fbbf24"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
+import {
+  NivoBar,
+  NivoCombo,
+  NivoLine,
+  NivoPie,
+  NivoScatter,
+} from "./charts/NivoCharts";
 
 function PivotTable({ result }: { result: QueryResult }) {
   const p = pivot(result);
@@ -68,103 +42,6 @@ function PivotTable({ result }: { result: QueryResult }) {
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-const PALETTE = ["#38bdf8", "#818cf8", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6"];
-
-function BarChart({
-  labels,
-  values,
-  onSelect,
-}: {
-  labels: string[];
-  values: number[];
-  onSelect?: (value: string) => void;
-}) {
-  const max = Math.max(1, ...values);
-  return (
-    <div className="chart">
-      {values.map((v, i) => (
-        <div className="chart__row" key={i}>
-          <span
-            className={onSelect ? "chart__label chart__label--click" : "chart__label"}
-            onClick={onSelect ? () => onSelect(labels[i]) : undefined}
-          >
-            {labels[i]}
-          </span>
-          <span className="chart__bar" style={{ width: `${(v / max) * 100}%` }} />
-          <span className="chart__value">{v}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LineChart({ values }: { values: number[] }) {
-  const w = 600;
-  const h = 160;
-  return (
-    <svg className="linechart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <polyline points={linePoints(values, w, h)} fill="none" stroke="#38bdf8" strokeWidth="2" />
-    </svg>
-  );
-}
-
-function AreaChart({ values }: { values: number[] }) {
-  const w = 600;
-  const h = 160;
-  const pts = linePoints(values, w, h);
-  return (
-    <svg className="linechart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <polygon points={`0,${h} ${pts} ${w},${h}`} fill="rgba(56,189,248,0.25)" stroke="#38bdf8" strokeWidth="2" />
-    </svg>
-  );
-}
-
-function ScatterChart({ result }: { result: QueryResult }) {
-  const w = 600;
-  const h = 200;
-  const pts = scatterPoints(result, w, h);
-  return (
-    <svg className="linechart" viewBox={`0 0 ${w} ${h}`}>
-      {pts.map((p, i) => (
-        <circle key={i} cx={p.cx} cy={p.cy} r="4" fill="#38bdf8" />
-      ))}
-    </svg>
-  );
-}
-
-function PieChart({ labels, values }: { labels: string[]; values: number[] }) {
-  const slices = pieSlices(values);
-  const r = 60;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className="pie">
-      <svg viewBox="0 0 160 160" width="160" height="160">
-        <g transform="translate(80,80) rotate(-90)">
-          {slices.map((s, i) => (
-            <circle
-              key={i}
-              r={r}
-              fill="none"
-              stroke={PALETTE[i % PALETTE.length]}
-              strokeWidth="36"
-              strokeDasharray={`${s.frac * c} ${c}`}
-              strokeDashoffset={`${-s.start * c}`}
-            />
-          ))}
-        </g>
-      </svg>
-      <ul className="pie__legend">
-        {labels.map((l, i) => (
-          <li key={i}>
-            <span className="pie__swatch" style={{ background: PALETTE[i % PALETTE.length] }} />
-            {l} ({values[i]})
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -197,10 +74,18 @@ export function ResultView({
   const data = chartable ? chartData(result) : { labels: [], values: [] };
   const active = kinds.includes(kind) ? kind : "table";
 
+  const indexName = columns[0] ?? "";
+  const valueName = columns[1] ?? "value";
+  const pickValue = onSelect ? (v: string) => onSelect(columns[0], v) : undefined;
+
   // Funnel = bars sorted by value, descending.
   const funnel = data.labels
     .map((label, i) => ({ label, value: data.values[i] }))
     .sort((a, b) => b.value - a.value);
+
+  // Charts that need the sized rectangular container (everything but pie,
+  // which has its own square container, and the table/pivot text views).
+  const isRectChart = active !== "table" && active !== "pivot" && active !== "pie";
 
   return (
     <div className="result">
@@ -217,25 +102,59 @@ export function ResultView({
         )}
       </div>
 
-      {active === "bar" && (
-        <BarChart
-          labels={data.labels}
-          values={data.values}
-          onSelect={onSelect ? (v) => onSelect(columns[0], v) : undefined}
-        />
+      {/* Sized container: nivo's responsive charts measure their parent. */}
+      {isRectChart && (
+        <div className="nivo-chart">
+          {active === "bar" && (
+            <NivoBar
+              labels={data.labels}
+              values={data.values}
+              indexName={indexName}
+              valueName={valueName}
+              onSelect={pickValue}
+            />
+          )}
+          {active === "line" && (
+            <NivoLine labels={data.labels} values={data.values} xName={indexName} yName={valueName} />
+          )}
+          {active === "area" && (
+            <NivoLine
+              labels={data.labels}
+              values={data.values}
+              xName={indexName}
+              yName={valueName}
+              area
+            />
+          )}
+          {active === "scatter" && <NivoScatter result={result} />}
+          {active === "funnel" && (
+            <NivoBar
+              labels={funnel.map((f) => f.label)}
+              values={funnel.map((f) => f.value)}
+              indexName={indexName}
+              valueName={valueName}
+              horizontal
+              onSelect={pickValue}
+            />
+          )}
+          {active === "combo" && (
+            <NivoCombo
+              labels={comboData(result).labels}
+              bars={comboData(result).bars}
+              line={comboData(result).line}
+              barName={columns[1] ?? "bars"}
+              lineName={columns[2] ?? "line"}
+            />
+          )}
+        </div>
       )}
-      {active === "line" && <LineChart values={data.values} />}
-      {active === "area" && <AreaChart values={data.values} />}
-      {active === "scatter" && <ScatterChart result={result} />}
-      {active === "funnel" && (
-        <BarChart
-          labels={funnel.map((f) => f.label)}
-          values={funnel.map((f) => f.value)}
-          onSelect={onSelect ? (v) => onSelect(columns[0], v) : undefined}
-        />
+
+      {active === "pie" && (
+        <div className="nivo-chart nivo-chart--pie">
+          <NivoPie labels={data.labels} values={data.values} onSelect={pickValue} />
+        </div>
       )}
-      {active === "combo" && <ComboChart result={result} />}
-      {active === "pie" && <PieChart labels={data.labels} values={data.values} />}
+
       {active === "pivot" && <PivotTable result={result} />}
 
       {active === "table" && (

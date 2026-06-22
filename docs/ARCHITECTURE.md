@@ -40,7 +40,7 @@ gaussanalytics/
 │   │   ── conversational UIs ──
 │   ├── gauss-chat/             # conversational web UI: axum SSE/WS chat server + agent runner bin
 │   └── gauss-chat-tui/         # conversational terminal UI (ratatui) — in-process chat client
-├── frontend/                   # reused React/TS/JS/CSS application
+├── frontend/                   # React/TS app; charts via nivo (D3) in components/charts
 └── docs/                       # strategy, architecture, roadmap, ADRs
 ```
 

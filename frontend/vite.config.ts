@@ -13,5 +13,14 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    rollupOptions: {
+      output: {
+        // Split the charting stack (nivo + d3) into its own cacheable chunk so
+        // the app shell stays small and the heavy viz code is fetched once.
+        manualChunks: {
+          charts: ["@nivo/core", "@nivo/bar", "@nivo/line", "@nivo/pie", "@nivo/scatterplot"],
+        },
+      },
+    },
   },
 });
