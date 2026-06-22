@@ -784,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-auth"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "chrono",
@@ -798,7 +798,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-chart"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gauss-engine",
  "serde_json",
@@ -806,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-chat"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-chat-tui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-config"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gauss-core",
  "serde",
@@ -862,7 +862,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-db"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -887,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-drivers"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "gauss-core",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-embed"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "gauss-engine",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-engine"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-insight"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gauss-chart",
  "gauss-engine",
@@ -938,7 +938,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-llm"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-mcp-gateway"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "gauss-core",
@@ -966,7 +966,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-memory"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-nl2sql"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "gauss-core",
@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-query"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gauss-core",
  "serde",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-scheduler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1026,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-semantic"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-sql"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1078,14 +1078,14 @@ dependencies = [
 
 [[package]]
 name = "gauss-sqlguard"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "sqlparser",
 ]
 
 [[package]]
 name = "gauss-textsql"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "gauss-engine",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-tools"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "csv",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "gauss-tui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ratatui",
  "reqwest",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "gaussctl"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "gauss-config",

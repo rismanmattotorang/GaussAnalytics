@@ -401,8 +401,49 @@ async fn revoke_api_key(
 // Databases
 // ---------------------------------------------------------------------------
 
+/// Mask secrets in a connection URI before it leaves the server: the password
+/// in `scheme://user:password@host/…` and any `password=`/`token=`/`key=` query
+/// parameters become `***`. The full URI is kept server-side for connecting and
+/// is never returned to clients.
+fn redact_connection_uri(uri: &str) -> String {
+    let mut out = uri.to_string();
+    // userinfo password: scheme://user:PASS@host
+    if let Some(scheme_end) = out.find("://") {
+        let after = scheme_end + 3;
+        if let Some(at_rel) = out[after..].find('@') {
+            let authority = &out[after..after + at_rel];
+            if let Some(colon) = authority.find(':') {
+                let masked = format!("{}:***", &authority[..colon]);
+                out.replace_range(after..after + at_rel, &masked);
+            }
+        }
+    }
+    // sensitive query parameters
+    for key in ["password", "token", "key", "secret"] {
+        if let Some(mut i) = out.to_lowercase().find(&format!("{key}=")) {
+            i += key.len() + 1;
+            let end = out[i..].find('&').map(|j| i + j).unwrap_or(out.len());
+            out.replace_range(i..end, "***");
+        }
+    }
+    out
+}
+
+/// A copy of `db` safe to return over the API (connection secrets masked).
+fn redact_database(mut db: Database) -> Database {
+    db.connection_uri = db.connection_uri.as_deref().map(redact_connection_uri);
+    db
+}
+
 async fn list_databases(State(st): State<AppState>) -> Result<Json<Vec<Database>>, ApiError> {
-    Ok(Json(st.store.list_databases().await?))
+    let dbs = st
+        .store
+        .list_databases()
+        .await?
+        .into_iter()
+        .map(redact_database)
+        .collect();
+    Ok(Json(dbs))
 }
 
 /// Require an authenticated administrator (holds `ManageSettings`).
@@ -436,7 +477,8 @@ async fn create_database(
         created_at: Utc::now(),
     };
     st.store.create_database(db.clone()).await?;
-    Ok(Json(db))
+    // Return the source with its connection secrets masked.
+    Ok(Json(redact_database(db)))
 }
 
 #[derive(Serialize)]
@@ -497,6 +539,8 @@ async fn delete_database(
         .await?
         .ok_or_else(|| CoreError::NotFound(format!("database {id}")))?;
     st.store.delete_database(id).await?;
+    // Drop any pooled connection so a re-created source reconnects cleanly.
+    st.connections.evict(id);
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
@@ -706,13 +750,8 @@ pub(crate) async fn execute_query(
         return Ok(hit);
     }
 
-    let uri = db.connection_uri.ok_or_else(|| {
-        CoreError::InvalidQuery(format!(
-            "data source `{}` has no connection configured",
-            db.name
-        ))
-    })?;
-    let driver = gauss_drivers::connect(db.kind, &uri).await?;
+    // Reuse a pooled connection for this source (connect-once, then cached).
+    let driver = st.connections.driver_for(&db).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
     st.usage.record_query();
@@ -776,12 +815,6 @@ async fn native_dataset(
         .database_by_id(req.database_id)
         .await?
         .ok_or_else(|| CoreError::NotFound(format!("database {}", req.database_id)))?;
-    let uri = db.connection_uri.clone().ok_or_else(|| {
-        CoreError::InvalidQuery(format!(
-            "data source `{}` has no connection configured",
-            db.name
-        ))
-    })?;
 
     // Read-only guardrail: reject DDL/DML and statement batching.
     let sql = gauss_nl2sql::ensure_read_only(&req.sql)?;
@@ -794,7 +827,8 @@ async fn native_dataset(
     if let Some(hit) = st.cache.get(&key) {
         return Ok(Json(hit));
     }
-    let driver = gauss_drivers::connect(db.kind, &uri).await?;
+    // Reuse the pooled connection for this source.
+    let driver = st.connections.driver_for(&db).await?;
     let result = driver.run(&compiled).await?;
     st.cache.put(key, result.clone());
     st.usage.record_query();
@@ -1335,6 +1369,46 @@ mod tests {
         assert!(ai.0.supported_providers.contains(&"vllm"));
         assert!(ai.0.supported_providers.contains(&"bedrock"));
         assert!(!ai.0.has_api_key);
+    }
+
+    #[test]
+    fn redacts_connection_credentials() {
+        assert_eq!(
+            redact_connection_uri("postgres://user:hunter2@host:5432/db"),
+            "postgres://user:***@host:5432/db"
+        );
+        // No password → untouched.
+        assert_eq!(
+            redact_connection_uri("sqlite://data/app.db"),
+            "sqlite://data/app.db"
+        );
+        // Sensitive query params are masked.
+        let r = redact_connection_uri("snowflake://acct?token=abc123&database=DB");
+        assert!(r.contains("token=***"), "{r}");
+        assert!(r.contains("database=DB"), "{r}");
+    }
+
+    #[tokio::test]
+    async fn connection_registry_reuses_and_evicts() {
+        let (st, _db_id) = test_state().await;
+        let db = gauss_core::domain::Database {
+            id: Uuid::new_v4(),
+            name: "probe".into(),
+            kind: DataSourceKind::Sqlite,
+            is_synced: false,
+            connection_uri: Some("sqlite::memory:".into()),
+            created_at: Utc::now(),
+        };
+        // First call connects + caches; the second reuses the very same handle.
+        let a = st.connections.driver_for(&db).await.unwrap();
+        let b = st.connections.driver_for(&db).await.unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "connection should be reused");
+        assert_eq!(st.connections.len(), 1);
+        // Eviction forces a fresh connection on the next use.
+        st.connections.evict(db.id);
+        assert!(st.connections.is_empty());
+        let c = st.connections.driver_for(&db).await.unwrap();
+        assert!(!Arc::ptr_eq(&a, &c), "evicted handle must not be reused");
     }
 
     #[tokio::test]

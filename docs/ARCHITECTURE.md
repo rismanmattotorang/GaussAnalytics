@@ -119,7 +119,12 @@ one `Driver` trait. SQLite/Postgres/MySQL run on `sqlx`; Oracle (ORDS REST
 Enabled SQL), Snowflake, BigQuery, and ClickHouse are REST/HTTP drivers. The
 `DataSourceKind`→driver and `DataSourceKind`→dialect resolutions, plus the
 kind's canonical wire string, all derive from one mapping in `gauss-core`, so
-adding an engine touches a single, consistent set of arms.
+adding an engine touches a single, consistent set of arms. The sqlx pools are
+bounded (max connections + acquire timeout) so a slow source can't hang the
+server. `gauss-server` holds a **`ConnectionRegistry`** that connects a source
+once and reuses that pool/client across requests, evicting on delete or when the
+connection URI changes — queries no longer pay a connect/handshake per call.
+Connection-string secrets are masked before any `Database` leaves the API.
 
 ### `gauss-db`
 The application's own metadata store (users, databases, cards, dashboards,

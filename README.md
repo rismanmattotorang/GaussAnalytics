@@ -9,6 +9,10 @@ _by [Gaussian Technologies](https://gaussian.tech)_
 Connect a database, ask in plain English or point-and-click, ship a dashboard.
 No GC pauses. No string-built SQL. No black-box AI.
 
+**v1.0** — the BI loop is end-to-end and the data-source layer is
+production-grade: pooled live connections, masked credentials, and seven
+engines behind one driver/dialect abstraction.
+
 [Quickstart](#quickstart) · [Architecture](docs/ARCHITECTURE.md) ·
 [Comparison](docs/COMPARISON.md) · [Roadmap](docs/ROADMAP.md) ·
 [Strategy](docs/STRATEGY.md)
@@ -76,7 +80,10 @@ Chat (SSE) ───┴─► gauss-chat ────────┴─ gauss-en
 
 **Data sources** (one `Driver` trait, one per-engine `Dialect`): SQLite,
 PostgreSQL, MySQL, **Oracle** (ORDS), **Snowflake**, BigQuery, ClickHouse. Add,
-**test**, sync, and delete them from the web app's *Data sources* page or the TUI.
+**test**, sync, and delete them from the web app's *Data sources* page or the
+TUI. Live connections are **pooled and reused** across requests (bounded pools +
+acquire timeouts), and connection-string **credentials are masked** in every API
+response — the full URI never leaves the server.
 
 **LLM providers** (the *Settings* page; runtime-editable + persisted): OpenAI,
 Anthropic, Gemini, Ollama, **OpenRouter**, **LiteLLM**, **vLLM**, **Bedrock**

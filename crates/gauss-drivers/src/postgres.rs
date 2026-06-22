@@ -9,8 +9,9 @@ use gauss_core::domain::{FieldType, Fingerprint};
 use gauss_core::error::{CoreError, CoreResult};
 use gauss_query::{CompiledQuery, SqlParam};
 use serde_json::{json, Value as JsonValue};
-use sqlx::postgres::{PgPool, PgRow};
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Row};
+use std::time::Duration;
 
 use crate::{DiscoveredColumn, DiscoveredTable, Driver, QueryResult};
 
@@ -22,7 +23,14 @@ pub struct PgDriver {
 impl PgDriver {
     /// Connect to a PostgreSQL database by URL.
     pub async fn connect(url: &str) -> CoreResult<Self> {
-        let pool = PgPool::connect(url).await.map_err(storage)?;
+        // Bounded pool + acquire timeout so one slow/dead source cannot exhaust
+        // connections or hang request handlers indefinitely.
+        let pool = PgPoolOptions::new()
+            .max_connections(crate::MAX_POOL_CONNECTIONS)
+            .acquire_timeout(Duration::from_secs(crate::POOL_ACQUIRE_TIMEOUT_SECS))
+            .connect(url)
+            .await
+            .map_err(storage)?;
         Ok(Self { pool })
     }
 
