@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     pub mcp: McpConfig,
     pub nl2sql: Nl2SqlConfig,
+    pub jupyter: JupyterConfig,
 }
 
 /// HTTP server settings.
@@ -71,6 +72,20 @@ pub struct McpConfig {
     pub base_url: String,
     /// Request timeout in milliseconds.
     pub timeout_ms: u64,
+}
+
+/// Settings for the embedded notebook kernel gateway. Notebook code executes on
+/// the user's **local** Jupyter Server (the user installs Python + Jupyter);
+/// GaussAnalytics connects to it. Disabled by default — no notebook routes are
+/// active and no connection is attempted until an operator opts in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JupyterConfig {
+    /// Whether the notebook integration is enabled.
+    pub enabled: bool,
+    /// Base URL of the local Jupyter Server (e.g. `http://127.0.0.1:8888`).
+    pub url: String,
+    /// Jupyter Server token (empty for token-less local servers).
+    pub token: String,
 }
 
 /// Settings for the in-house NL2SQL engine.
@@ -129,6 +144,11 @@ impl Default for AppConfig {
                 api_key: String::new(),
                 base_url: String::new(),
                 timeout_ms: 30_000,
+            },
+            jupyter: JupyterConfig {
+                enabled: false,
+                url: "http://127.0.0.1:8888".into(),
+                token: String::new(),
             },
         }
     }
@@ -212,6 +232,15 @@ impl AppConfig {
         }
         if let Some(v) = get("GAUSS_NL2SQL_TIMEOUT_MS") {
             cfg.nl2sql.timeout_ms = parse(&v, "GAUSS_NL2SQL_TIMEOUT_MS")?;
+        }
+        if let Some(v) = get("GAUSS_JUPYTER_ENABLED") {
+            cfg.jupyter.enabled = parse_bool(&v, "GAUSS_JUPYTER_ENABLED")?;
+        }
+        if let Some(v) = get("GAUSS_JUPYTER_URL") {
+            cfg.jupyter.url = v;
+        }
+        if let Some(v) = get("GAUSS_JUPYTER_TOKEN") {
+            cfg.jupyter.token = v;
         }
 
         Ok(cfg)

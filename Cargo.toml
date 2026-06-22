@@ -33,6 +33,7 @@ members = [
     "crates/gauss-runtime",
     "crates/gauss-chat",
     "crates/gauss-chat-tui",
+    "crates/gauss-notebook",
     "crates/gauss-server",
     "crates/gauss-tui",
     "crates/gaussctl",
@@ -72,6 +73,7 @@ gauss-memory = { path = "crates/gauss-memory" }
 gauss-tools = { path = "crates/gauss-tools" }
 gauss-runtime = { path = "crates/gauss-runtime" }
 gauss-chat = { path = "crates/gauss-chat" }
+gauss-notebook = { path = "crates/gauss-notebook" }
 gauss-server = { path = "crates/gauss-server" }
 gauss-tui = { path = "crates/gauss-tui" }
 
@@ -79,6 +81,8 @@ gauss-tui = { path = "crates/gauss-tui" }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-stream = "0.3"
+# Notebook kernel gateway: WebSocket client to a local Jupyter Server.
+tokio-tungstenite = { version = "0.29", features = ["connect"] }
 axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs", "catch-panic", "limit"] }
