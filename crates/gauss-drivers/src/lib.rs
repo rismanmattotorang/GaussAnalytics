@@ -16,6 +16,7 @@
 pub mod bigquery;
 pub mod clickhouse;
 pub mod mysql;
+pub mod oracle;
 pub mod postgres;
 pub mod rest;
 pub mod snowflake;
@@ -32,6 +33,7 @@ pub use bigquery::BigQueryDriver;
 pub use clickhouse::ClickHouseDriver;
 pub use gauss_core::domain::Fingerprint;
 pub use mysql::MySqlDriver;
+pub use oracle::OracleDriver;
 pub use postgres::PgDriver;
 pub use snowflake::SnowflakeDriver;
 pub use sqlite::SqliteDriver;
@@ -104,6 +106,7 @@ pub async fn connect(kind: DataSourceKind, uri: &str) -> CoreResult<Box<dyn Driv
         DataSourceKind::Sqlite => Ok(Box::new(SqliteDriver::connect(uri).await?)),
         DataSourceKind::Postgres => Ok(Box::new(PgDriver::connect(uri).await?)),
         DataSourceKind::MySql => Ok(Box::new(MySqlDriver::connect(uri).await?)),
+        DataSourceKind::Oracle => Ok(Box::new(OracleDriver::connect(uri)?)),
         DataSourceKind::BigQuery => Ok(Box::new(BigQueryDriver::connect(uri)?)),
         DataSourceKind::Snowflake => Ok(Box::new(SnowflakeDriver::connect(uri)?)),
         DataSourceKind::ClickHouse => Ok(Box::new(ClickHouseDriver::connect(uri)?)),

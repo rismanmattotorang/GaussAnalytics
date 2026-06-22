@@ -14,6 +14,7 @@ export type DataSourceKind =
   | "postgres"
   | "mysql"
   | "sqlite"
+  | "oracle"
   | "bigquery"
   | "snowflake"
   | "clickhouse"

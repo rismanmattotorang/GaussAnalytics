@@ -104,8 +104,22 @@ database, security, MCP gateway, and NL2SQL.
 The query compiler. Takes a validated `gauss_core::gql::Query` plus a target
 `Dialect` and produces a `CompiledQuery { sql, params }` where `sql` contains
 only placeholders and every literal is bound. This is the central **security
-guarantee**: user input never becomes SQL text. Dialect-specific quoting,
-placeholder style, and limit syntax are isolated behind a `Dialect` trait.
+guarantee**: user input never becomes SQL text. Dialect-specific behaviour —
+identifier quoting (`quote_ident`), placeholder style (`placeholder`), and the
+row-limit clause (`limit_clause`) — is isolated behind the `Dialect` trait, with
+one implementation per engine. For example Oracle quotes `"col"`, binds `:n`,
+and pages with `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` (it has no `LIMIT`), while
+Postgres binds `$n` and uses `LIMIT n`. `gauss-query`'s tests include a
+dialect-matrix check that compiles the same query for SQLite, Postgres, MySQL,
+Oracle, and Snowflake and asserts the exact per-engine SQL.
+
+### `gauss-drivers`
+Executes a `CompiledQuery` against a live source and introspects its schema, via
+one `Driver` trait. SQLite/Postgres/MySQL run on `sqlx`; Oracle (ORDS REST
+Enabled SQL), Snowflake, BigQuery, and ClickHouse are REST/HTTP drivers. The
+`DataSourceKind`→driver and `DataSourceKind`→dialect resolutions, plus the
+kind's canonical wire string, all derive from one mapping in `gauss-core`, so
+adding an engine touches a single, consistent set of arms.
 
 ### `gauss-db`
 The application's own metadata store (users, databases, cards, dashboards,
