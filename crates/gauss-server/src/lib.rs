@@ -453,13 +453,28 @@ fn redact_connection_uri(uri: &str) -> String {
             }
         }
     }
-    // sensitive query parameters
-    for key in ["password", "token", "key", "secret"] {
-        if let Some(mut i) = out.to_lowercase().find(&format!("{key}=")) {
-            i += key.len() + 1;
-            let end = out[i..].find('&').map(|j| i + j).unwrap_or(out.len());
-            out.replace_range(i..end, "***");
-        }
+    // Sensitive query parameters: mask the value of *every* param whose key
+    // contains a sensitive word, matched on `&` boundaries (not raw substrings,
+    // which masked only the first hit and could mangle an unrelated value).
+    if let Some(q) = out.find('?') {
+        const SENSITIVE: [&str; 4] = ["password", "token", "key", "secret"];
+        let base = out[..=q].to_string();
+        let redacted = out[q + 1..]
+            .split('&')
+            .map(|pair| match pair.split_once('=') {
+                Some((k, _))
+                    if {
+                        let kl = k.to_ascii_lowercase();
+                        SENSITIVE.iter().any(|s| kl.contains(s))
+                    } =>
+                {
+                    format!("{k}=***")
+                }
+                _ => pair.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        out = format!("{base}{redacted}");
     }
     out
 }
@@ -1467,6 +1482,14 @@ mod tests {
         let r = redact_connection_uri("snowflake://acct?token=abc123&database=DB");
         assert!(r.contains("token=***"), "{r}");
         assert!(r.contains("database=DB"), "{r}");
+        // Every occurrence is masked (not just the first), on param boundaries.
+        let r = redact_connection_uri("db://h?token=a&db=main&token=b&secret=c");
+        assert_eq!(r, "db://h?token=***&db=main&token=***&secret=***");
+        // A non-sensitive param that merely contains a value isn't corrupted.
+        assert_eq!(
+            redact_connection_uri("db://h?database=keys&token=x"),
+            "db://h?database=keys&token=***"
+        );
     }
 
     #[tokio::test]

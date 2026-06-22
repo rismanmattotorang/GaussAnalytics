@@ -177,6 +177,22 @@ describe("Notebooks", () => {
     );
   });
 
+  it("renders kernel text/html in a sandboxed iframe (no raw injection)", async () => {
+    (api.runCell as ReturnType<typeof vi.fn>).mockResolvedValue({
+      kernel_id: "k1",
+      outputs: [{ kind: "data", data: { "text/html": "<b>hi</b><script>steal()</script>" } }],
+    });
+    render(<Notebooks token="admin" databases={[]} />);
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    const frame = await screen.findByTitle("cell HTML output");
+    // Sandboxed (scripts disabled) and content carried via srcdoc, not injected.
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect((frame as HTMLIFrameElement).getAttribute("srcdoc")).toContain("<b>hi</b>");
+  });
+
   it("asks the AI assistant and appends the proposed cell", async () => {
     (api.assistNotebook as ReturnType<typeof vi.fn>).mockResolvedValue({
       cell: { id: "ai1", kind: "python", source: "# drafted by AI" },

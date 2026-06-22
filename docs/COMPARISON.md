@@ -50,6 +50,9 @@ effectively free relative to network/DB round-trips.
   enforced before query execution.
 - **Governed AI**: NL2SQL output is read-only-guardrailed and runs under the
   caller's permissions; MCP tool calls are allow-listed and audited.
+- **Notebook output isolation**: untrusted `text/html` cell output and published
+  dashboard snapshots render in a **sandboxed iframe** (scripts disabled, opaque
+  origin) — no XSS into the app origin or token access.
 - `#![forbid(unsafe_code)]` workspace-wide; lean dependency tree.
 
 ## Honest gaps (in progress)

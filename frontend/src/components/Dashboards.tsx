@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   type Card,
@@ -13,6 +13,9 @@ import {
 } from "../api/client";
 import { matchingParam, move, orderedLayout, type LayoutItem } from "../lib/dashboard";
 import { ResultView } from "./ResultView";
+import { BigNumberView } from "./BigNumberView";
+import { HtmlOutput } from "./HtmlOutput";
+import { mdToHtml } from "../lib/markdown";
 
 /** Render a published notebook-cell snapshot: a nivo chart, a headline number,
  * a table, an image, or text — whatever the cell produced. */
@@ -34,21 +37,13 @@ function NotebookTile({ card }: { card: DashboardNotebookCard }) {
     );
   }
   if (snap.result) {
-    if (card.view === "big_number") {
-      const value = snap.result.rows[0]?.[0];
-      return (
-        <div className="big-number">
-          <div className="big-number__value">
-            {value === null || value === undefined ? "∅" : String(value)}
-          </div>
-          <div className="big-number__label">{snap.result.columns[0] ?? ""}</div>
-        </div>
-      );
-    }
+    if (card.view === "big_number") return <BigNumberView result={snap.result} />;
     // chart (nivo) or table — ResultView picks/renders either.
     return <ResultView result={snap.result} />;
   }
-  if (snap.html) return <div dangerouslySetInnerHTML={{ __html: snap.html }} />;
+  // Untrusted HTML is sandboxed (scripts disabled) — dashboards are viewable
+  // without a token, so a published snapshot must not be able to script the app.
+  if (snap.html) return <HtmlOutput html={snap.html} />;
   if (snap.text) return <pre className="nb-output">{snap.text}</pre>;
   return <p className="muted">No output.</p>;
 }
@@ -57,22 +52,6 @@ function valuesObj(filters: Record<string, string>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(filters)) if (v !== "") out[k] = v;
   return out;
-}
-
-/** Minimal, escaped Markdown → HTML for dashboard text cards (headings, bold,
- * inline code, line breaks). Input is escaped first, so it is safe to inject. */
-function mdToHtml(src: string): string {
-  const esc = src
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  return esc
-    .replace(/^### (.*)$/gm, "<h4>$1</h4>")
-    .replace(/^## (.*)$/gm, "<h3>$1</h3>")
-    .replace(/^# (.*)$/gm, "<h2>$1</h2>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\n/g, "<br>");
 }
 
 export function Dashboards({ token }: { token: string | null }) {
@@ -128,12 +107,20 @@ export function Dashboards({ token }: { token: string | null }) {
     await runBoard(d, {});
   }
 
+  // Latest filter values for the auto-refresh timer, without re-arming the
+  // interval on every keystroke (which would reset the timer / never fire).
+  const filterValuesRef = useRef(filterValues);
+  filterValuesRef.current = filterValues;
+
   // Auto-refresh timer.
   useEffect(() => {
     if (!open || autoRefresh <= 0) return;
-    const handle = setInterval(() => runBoard(open, valuesObj(filterValues)), autoRefresh * 1000);
+    const handle = setInterval(
+      () => runBoard(open, valuesObj(filterValuesRef.current)),
+      autoRefresh * 1000,
+    );
     return () => clearInterval(handle);
-  }, [open, autoRefresh, filterValues]);
+  }, [open, autoRefresh]);
 
   async function refreshNotebooks() {
     if (!token || !open) return;
