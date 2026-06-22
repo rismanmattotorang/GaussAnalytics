@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { ResultView } from "./ResultView";
 
 describe("ResultView", () => {
@@ -13,12 +13,16 @@ describe("ResultView", () => {
     expect(screen.getByText("linus")).toBeTruthy();
   });
 
-  it("renders a chartable result with a viz picker", () => {
+  it("renders a chartable result with a viz picker including nivo chart kinds", () => {
     render(
       <ResultView result={{ columns: ["status", "value"], rows: [["paid", 15]] }} />,
     );
-    // The category label appears (default bar chart) and a chart-type picker exists.
-    expect(screen.getByText("paid")).toBeTruthy();
+    // The chart-type picker offers the nivo-backed kinds.
+    expect(screen.getByText("bar")).toBeTruthy();
+    expect(screen.getByText("line")).toBeTruthy();
     expect(screen.getByText("pie")).toBeTruthy();
+    // Switching to the table view surfaces the underlying data.
+    fireEvent.click(screen.getByText("table"));
+    expect(screen.getByText("paid")).toBeTruthy();
   });
 });

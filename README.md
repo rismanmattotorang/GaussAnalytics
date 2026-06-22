@@ -36,6 +36,10 @@ Gaussian Technologies on a **Rust** core:
   Technologies' own models and tooling.
 - 🖥️ **Operator-first** — a polished web UI for everyone, plus a fast,
   keyboard-driven **terminal admin console** for the people who run it.
+- 📊 **Rich, interactive charts** — every result and dashboard card renders
+  through [**nivo**](https://nivo.rocks) (D3-powered React charts): responsive
+  bar, line, area, scatter, funnel, combo, and pie with tooltips, legends, axis
+  titles, animation, and click-to-cross-filter.
 
 > GaussAnalytics keeps a best-in-class web experience (React/TypeScript) and
 > pairs it with a brand-new, high-performance Rust backend.
@@ -169,7 +173,7 @@ crates/
   -- conversational UIs --
   gauss-chat          conversational web UI: axum SSE/WebSocket chat server + agent runner binary
   gauss-chat-tui      conversational terminal UI (ratatui) — in-process chat client
-frontend/             React + TypeScript web application
+frontend/             React + TypeScript web application (charts via nivo/D3)
 docs/                 strategy, architecture, roadmap, ADRs
 ```
 
@@ -221,6 +225,26 @@ Chart types: number, bar, grouped bar, line, multi-line, pie, scatter (falling
 back to a table when no chart is honest). The panel appears in the chat web UI
 (inline SVG charts + clickable follow-up chips), the TUI, and the JSON API.
 
+### Charts & dashboards (nivo)
+
+The React web app renders every query result and dashboard card through
+[**nivo**](https://nivo.rocks), a D3-powered React charting library. A result
+opens with a sensible default chart and a one-click **chart-type picker**:
+
+- **bar** / **funnel** (sorted horizontal bars) / **pie** — categorical
+  breakdowns, with **click-to-cross-filter** that drives dashboard parameters;
+- **line** / **area** — trends;
+- **scatter** — two-measure correlation;
+- **combo** — bars + an overlaid line on a shared scale (one custom nivo layer);
+- **pivot** / **table** — for matrix and raw views.
+
+All charts share one dark theme and get tooltips, legends, axis titles, and
+animation for free, are fully responsive, and are code-split into a separate
+cacheable bundle so the app shell stays small. Chart wrappers live in
+`frontend/src/components/charts/NivoCharts.tsx` and consume the pure data
+helpers in `frontend/src/lib/viz.ts`, keeping the rest of the app decoupled
+from the charting library.
+
 ## Status
 
 GaussAnalytics is in active development. **Phases 0–3 are complete and Phase 4
@@ -230,8 +254,9 @@ columns**, auth (sessions, **persisted per-user grants**, mandatory-auth
 middleware, **rotatable API keys**, **signed-token embedding**), data-source
 management, a **scheduler with query alerts**, a **query-result cache**, and now
 the BI core — **saved questions, dashboards, collections, content
-export/import**, and a **web UI** (query builder + table/bar chart + saved
-questions + natural-language Ask). The **NL2SQL engine is now fully in-house** —
+export/import**, and a **web UI** (query builder + **interactive nivo/D3 charts**
++ saved questions + natural-language Ask). The **NL2SQL engine is now fully
+in-house** —
 a self-correcting text-to-SQL pipeline (schema linking → few-shot → AST
 guardrails → execution-guided repair → PII redaction) with in-process LLM
 clients and no external service credential — surfaced through a **conversational

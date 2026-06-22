@@ -210,6 +210,17 @@ label {
   text-decoration: underline;
   font-weight: 700;
 }
+/* Sized container for nivo's responsive charts (they measure their parent). */
+.nivo-chart {
+  width: 100%;
+  height: 320px;
+  background: #0f1530;
+  border-radius: 8px;
+  padding: 4px 6px;
+}
+.nivo-chart--pie {
+  height: 360px;
+}
 .linechart {
   width: 100%;
   height: 160px;
