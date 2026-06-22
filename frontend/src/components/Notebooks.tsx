@@ -149,6 +149,10 @@ export function Notebooks({
   const [createName, setCreateName] = useState("");
   const [publishTarget, setPublishTarget] = useState("");
   const [publishedId, setPublishedId] = useState<string | null>(null);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiDb, setAiDb] = useState("");
+  const [assisting, setAssisting] = useState(false);
+  const [mode, setMode] = useState("local");
   const [error, setError] = useState<string | null>(null);
 
   function load() {
@@ -159,6 +163,10 @@ export function Notebooks({
     api
       .dashboards()
       .then(setDashboards)
+      .catch(() => {});
+    api
+      .notebookCapabilities()
+      .then((c) => setMode(c.mode))
       .catch(() => {});
   }
   useEffect(load, []);
@@ -313,6 +321,59 @@ export function Notebooks({
     }
   }
 
+  // Export the open notebook as a downloadable .ipynb file.
+  async function exportNotebook() {
+    if (!open) return;
+    setError(null);
+    try {
+      const doc = await api.exportNotebook(open.id);
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${open.name || "notebook"}.ipynb`;
+      a.click();
+      // Defer revocation so the browser has initiated the download first.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  // Create a notebook from an uploaded .ipynb file, then open it.
+  async function importNotebook(file: File) {
+    if (!token) return;
+    setError(null);
+    try {
+      const ipynb = JSON.parse(await file.text());
+      const nb = await api.importNotebook({ ipynb }, token);
+      load();
+      openNotebook(nb);
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  // Ask the in-notebook assistant to propose a cell, then append it.
+  async function askAi() {
+    if (!token || !open || !aiPrompt.trim()) return;
+    setError(null);
+    setAssisting(true);
+    try {
+      const res = await api.assistNotebook(
+        open.id,
+        { prompt: aiPrompt, database_id: aiDb || undefined },
+        token,
+      );
+      setCells((cs) => [...cs, res.cell]);
+      setAiPrompt("");
+    } catch (e) {
+      fail(e);
+    } finally {
+      setAssisting(false);
+    }
+  }
+
   async function startKernel() {
     if (!token || !open) return;
     try {
@@ -361,6 +422,9 @@ export function Notebooks({
             </button>
             <button onClick={save}>Save</button>
             {saved && <span className="ds-ok">Saved</span>}
+            <button className="link" onClick={exportNotebook}>
+              Export .ipynb
+            </button>
             {dashboards.length > 0 && (
               <select
                 aria-label="publish target"
@@ -389,6 +453,33 @@ export function Notebooks({
         </div>
 
         {error && <p className="app__error">{error}</p>}
+
+        <div className="notebooks__ai">
+          <input
+            placeholder="Ask AI to draft a cell (guardrailed SQL against the chosen source, else Python)…"
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            aria-label="ask ai"
+          />
+          {databases.length > 0 && (
+            <select
+              aria-label="ai data source"
+              value={aiDb}
+              onChange={(e) => setAiDb(e.target.value)}
+              title="Data source for a SQL suggestion (none → Python)"
+            >
+              <option value="">no source → Python</option>
+              {databases.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button onClick={askAi} disabled={assisting || !aiPrompt.trim()}>
+            {assisting ? "Thinking…" : "Ask AI"}
+          </button>
+        </div>
 
         {cells.length === 0 && <p className="muted">Empty notebook — add a cell below.</p>}
 
@@ -587,10 +678,11 @@ export function Notebooks({
       <p className="muted">
         Mix Markdown notes, SQL/NL2SQL queries (results land as a pandas
         DataFrame), inputs, Python, and nivo charts / big numbers over any
-        DataFrame — all on your local Jupyter kernel. <strong>Run all</strong>{" "}
-        executes in dependency order; <strong>Run ↓</strong> re-runs a cell and
-        everything that depends on it. Code execution requires{" "}
-        <code>GAUSS_JUPYTER_ENABLED</code> and a running Jupyter Server.
+        DataFrame. <strong>Run all</strong> executes in dependency order;{" "}
+        <strong>Run ↓</strong> re-runs a cell and everything that depends on it.
+        Import/export <code>.ipynb</code> and publish cells to dashboards. Code
+        runs {mode === "managed" ? "on a managed sandboxed kernel" : "on your local Jupyter kernel"}{" "}
+        and requires <code>GAUSS_JUPYTER_ENABLED</code>.
       </p>
 
       {error && <p className="app__error">{error}</p>}
@@ -604,6 +696,19 @@ export function Notebooks({
         <button onClick={create} disabled={!createName}>
           Create
         </button>
+        <label className="link notebooks__import">
+          Import .ipynb
+          <input
+            type="file"
+            accept=".ipynb,application/json"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) importNotebook(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
       </div>
 
       {notebooks.length === 0 ? (

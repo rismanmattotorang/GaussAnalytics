@@ -107,6 +107,11 @@ pub fn router(state: AppState) -> Router {
             get(content::list_notebooks).post(content::create_notebook),
         )
         .route(
+            "/notebooks/capabilities",
+            get(content::notebook_capabilities),
+        )
+        .route("/notebooks/import", post(content::import_notebook_ipynb))
+        .route(
             "/notebooks/{id}",
             get(content::get_notebook)
                 .put(content::update_notebook)
@@ -126,6 +131,11 @@ pub fn router(state: AppState) -> Router {
             post(content::notebook_run_order),
         )
         .route("/notebooks/{id}/publish", post(content::notebook_publish))
+        .route(
+            "/notebooks/{id}/export",
+            get(content::export_notebook_ipynb),
+        )
+        .route("/notebooks/{id}/assist", post(content::notebook_assist))
         .route("/dashboards/{id}/refresh", post(content::refresh_dashboard))
         .route("/export", get(content::export_content))
         .route("/import", post(content::import_content))
@@ -1796,6 +1806,90 @@ mod tests {
             Err(e) => assert!(e.0.to_string().contains("not enabled"), "{}", e.0),
             Ok(_) => panic!("expected an error when Jupyter is disabled"),
         }
+    }
+
+    #[tokio::test]
+    async fn notebook_ipynb_round_trip_and_assist_fallback() {
+        let (st, _db_id) = test_state().await;
+        ensure_admin(st.store.as_ref(), "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let login = auth::login(&st, "admin@example.com", "supersecret1")
+            .await
+            .unwrap();
+        let hdr = bearer(&login.token);
+
+        // Create a notebook, export it to .ipynb, then re-import → same cells.
+        let nb = content::create_notebook(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::SaveNotebookRequest {
+                name: "Roundtrip".into(),
+                collection_id: None,
+                cells: vec![
+                    gauss_core::domain::NotebookCell {
+                        id: Uuid::new_v4(),
+                        kind: gauss_core::domain::CellKind::Markdown,
+                        source: "# Hi".into(),
+                        database_id: None,
+                        output_var: None,
+                        input_var: None,
+                    },
+                    gauss_core::domain::NotebookCell {
+                        id: Uuid::new_v4(),
+                        kind: gauss_core::domain::CellKind::Python,
+                        source: "x = 1".into(),
+                        database_id: None,
+                        output_var: None,
+                        input_var: None,
+                    },
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+
+        let ipynb = content::export_notebook_ipynb(State(st.clone()), Path(nb.0.id))
+            .await
+            .unwrap();
+        assert_eq!(ipynb.0["nbformat"], 4);
+
+        let imported = content::import_notebook_ipynb(
+            State(st.clone()),
+            hdr.clone(),
+            Json(content::ImportNotebookRequest {
+                name: Some("Copy".into()),
+                ipynb: ipynb.0,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported.0.cells.len(), 2);
+        assert_eq!(
+            imported.0.cells[0].kind,
+            gauss_core::domain::CellKind::Markdown
+        );
+        assert_eq!(imported.0.cells[1].source, "x = 1");
+
+        // Assist with NL2SQL disabled proposes a Python starter cell.
+        let assist = content::notebook_assist(
+            State(st.clone()),
+            Path(nb.0.id),
+            hdr,
+            Json(content::AssistRequest {
+                prompt: "summarize revenue by region".into(),
+                database_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(assist.0.cell.kind, gauss_core::domain::CellKind::Python);
+        assert!(assist.0.cell.source.contains("revenue by region"));
+
+        // Capabilities report the (default, local) execution model.
+        let caps = content::notebook_capabilities(State(st)).await;
+        assert!(!caps.0.enabled);
+        assert_eq!(caps.0.mode, "local");
     }
 
     #[tokio::test]

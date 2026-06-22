@@ -454,4 +454,14 @@ export const api = {
   ) => authed<Dashboard>(`/notebooks/${notebookId}/publish`, "POST", token, body),
   refreshDashboard: (id: string, token: string) =>
     authed<{ refreshed: number }>(`/dashboards/${id}/refresh`, "POST", token),
+  exportNotebook: (id: string) => request<Record<string, unknown>>(`/notebooks/${id}/export`),
+  importNotebook: (body: { name?: string; ipynb: unknown }, token: string) =>
+    authed<Notebook>("/notebooks/import", "POST", token, body),
+  assistNotebook: (
+    id: string,
+    body: { prompt: string; database_id?: string },
+    token: string,
+  ) => authed<{ cell: NotebookCell; note: string }>(`/notebooks/${id}/assist`, "POST", token, body),
+  notebookCapabilities: () =>
+    request<{ enabled: boolean; mode: string }>("/notebooks/capabilities"),
 };

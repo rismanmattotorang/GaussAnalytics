@@ -65,8 +65,13 @@ GaussAnalytics does **not yet** match the reference platform's *breadth*:
   (the latter three as integration-stage REST drivers with golden-tested
   dialects, live-validation pending); further long tail (Redshift, Databricks,
   …) per demand behind the `Driver` trait.
-- **AI depth**: NL2SQL + MCP are integrated and governed, but multi-turn
+- **AI depth**: NL2SQL + MCP are integrated and governed, and an **in-notebook
+  AI assistant** proposes cells through the same guardrailed pipeline; multi-turn
   clarification, lineage, and chained MCP agent workflows are still ahead.
+- **Notebooks**: embedded data notebooks (Markdown/Python/SQL/NL2SQL/Input/Chart/
+  Big Number) on a local-or-managed Jupyter kernel, with a reactive dependency
+  DAG, **publish-to-dashboard**, and **`.ipynb` import/export** — a capability the
+  reference platform does not have at all.
 - **Subscriptions/pulses**: the scheduler now delivers query alerts and
   subscription digests over **log, webhook, and email** channels (email via an
   HTTP relay / transactional API). Per-recipient schedule management UI and a
