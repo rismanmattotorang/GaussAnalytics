@@ -227,10 +227,8 @@ impl KernelGateway {
     }
 
     /// Execute `code` on `kernel_id` and collect its outputs in order, returning
-    /// once the kernel reports `idle` for this request (or sends `execute_reply`).
-    ///
-    /// N0 collects outputs; the streaming-to-browser path is added with the
-    /// notebook server routes in N1.
+    /// once the kernel reports `idle` on `iopub` for this request's
+    /// `parent_header` (the protocol's end-of-execution signal).
     pub async fn execute_collect(
         &self,
         kernel_id: &str,
@@ -248,7 +246,6 @@ impl KernelGateway {
             .map_err(integ)?;
 
         let mut outputs = Vec::new();
-        let mut saw_reply = false;
         while let Some(frame) = ws.next().await {
             let frame = frame.map_err(integ)?;
             let text = match frame {
@@ -262,16 +259,16 @@ impl KernelGateway {
             };
             match classify(&msg, &msg_id) {
                 KernelMessage::Output(o) => outputs.push(o),
-                KernelMessage::ExecuteReply => saw_reply = true,
                 // `idle` after our request means execution is complete.
                 KernelMessage::Status(state) if state == "idle" => {
                     let _ = ws.close(None).await;
                     break;
                 }
+                // `execute_reply` (shell) only acknowledges the request; the
+                // `iopub` `idle` above is the end signal. Other messages: ignore.
                 _ => {}
             }
         }
-        let _ = saw_reply;
         Ok(outputs)
     }
 }

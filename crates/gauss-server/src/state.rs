@@ -53,7 +53,16 @@ impl ConnectionRegistry {
         }
         // Slow path: connect without holding the lock across the await.
         let driver: Arc<dyn Driver> = Arc::from(gauss_drivers::connect(db.kind, &uri).await?);
-        self.conns.write().expect("conn lock").insert(
+        // Re-check under the write lock: if another task connected the same uri
+        // concurrently, converge on its cached handle and drop ours, so every
+        // caller shares one pool (no overwrite churn / abandoned connections).
+        let mut conns = self.conns.write().expect("conn lock");
+        if let Some(existing) = conns.get(&db.id) {
+            if existing.uri == uri {
+                return Ok(existing.driver.clone());
+            }
+        }
+        conns.insert(
             db.id,
             CachedDriver {
                 uri,
@@ -142,6 +151,9 @@ pub struct AppState {
     /// Live kernel sessions: notebook id → its running Jupyter kernel id. A
     /// process-lifetime map (kernels live in the user's Jupyter, not here).
     pub kernels: Arc<RwLock<HashMap<Uuid, String>>>,
+    /// Serializes kernel creation so concurrent runs of the same notebook don't
+    /// start (and orphan) duplicate kernels or split variable state across them.
+    pub kernel_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// The LLM providers this build can drive for NL2SQL. OpenRouter, LiteLLM, and
@@ -288,6 +300,7 @@ impl AppState {
             connections: Arc::new(ConnectionRegistry::default()),
             notebook,
             kernels: Arc::new(RwLock::new(HashMap::new())),
+            kernel_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 

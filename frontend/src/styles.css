@@ -613,6 +613,14 @@ code {
   margin-top: 6px;
   border-radius: 6px;
 }
+.nb-html {
+  width: 100%;
+  min-height: 160px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+}
 .nb-cell__data-controls,
 .nb-cell__input {
   display: flex;

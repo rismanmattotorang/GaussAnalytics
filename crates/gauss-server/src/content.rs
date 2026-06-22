@@ -343,9 +343,19 @@ fn literal_for(
             serde_json::Value::Null => None,
             other => Some(Literal::Text(other.to_string())),
         },
+        // Preserve integer typing (matches the native-SQL param path): binding a
+        // whole number as a float can fail equality against integer keys on
+        // type-strict backends.
         ParamKind::Number => match v {
-            serde_json::Value::Number(n) => n.as_f64().map(Literal::Float),
-            serde_json::Value::String(s) => s.parse::<f64>().ok().map(Literal::Float),
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .map(Literal::Int)
+                .or_else(|| n.as_f64().map(Literal::Float)),
+            serde_json::Value::String(s) => s
+                .parse::<i64>()
+                .map(Literal::Int)
+                .ok()
+                .or_else(|| s.parse::<f64>().ok().map(Literal::Float)),
             _ => None,
         },
     }
@@ -545,6 +555,13 @@ pub struct KernelStatus {
 
 /// Get-or-start the kernel bound to a notebook, returning its id.
 async fn ensure_kernel(st: &AppState, notebook_id: Uuid) -> Result<String, ApiError> {
+    // Fast path: a kernel is already bound.
+    if let Some(k) = st.notebook_kernel(notebook_id) {
+        return Ok(k);
+    }
+    // Serialize creation, then re-check: concurrent runs of the same notebook
+    // must share one kernel (or one would be orphaned and variable state split).
+    let _guard = st.kernel_lock.lock().await;
     if let Some(k) = st.notebook_kernel(notebook_id) {
         return Ok(k);
     }
@@ -615,6 +632,16 @@ pub struct RunCellResponse {
     /// For SQL / NL2SQL cells: the result rows, for an inline preview table.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<gauss_drivers::QueryResult>,
+}
+
+/// Resolve a DataFrame variable name, defaulting an absent/empty value to `df`.
+/// Used identically by execution and the dependency-graph builder so a cell that
+/// plans cleanly also runs cleanly.
+fn var_or_df(v: &Option<String>) -> String {
+    v.as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("df")
+        .to_string()
 }
 
 /// Validate a kernel variable name (so generated injection code is safe). A
@@ -816,7 +843,7 @@ async fn execute_cell(
             };
             // Governed execution (ReadDatabase + read-only guard + pooled conn).
             let result = crate::run_guarded_sql(st, headers, db_id, &sql, &[]).await?;
-            let var = valid_ident(cell.output_var.as_deref().unwrap_or("df"))?;
+            let var = valid_ident(&var_or_df(&cell.output_var))?;
             let code = inject_dataframe_code(&var, &result);
             run.outputs = gw.execute_collect(kernel_id, &code).await?;
             run.sql = Some(sql);
@@ -826,7 +853,7 @@ async fn execute_cell(
             // Fetch the referenced DataFrame from the kernel; the web UI renders
             // it (nivo chart / headline number). Kernel errors (e.g. the var is
             // undefined) surface as outputs instead of a preview.
-            let var = valid_ident(cell.input_var.as_deref().unwrap_or("df"))?;
+            let var = valid_ident(&var_or_df(&cell.input_var))?;
             let code = fetch_dataframe_code(&var);
             let outputs = gw.execute_collect(kernel_id, &code).await?;
             match parse_dataframe_outputs(&outputs) {
@@ -1222,11 +1249,6 @@ pub struct RunOrderResponse {
 /// Reduce a notebook cell to its data dependencies for the reactive DAG.
 fn cell_spec(cell: &NotebookCell) -> gauss_notebook::dag::CellSpec {
     use gauss_notebook::dag::{analyze_python, CellSpec};
-    let var_or_df = |v: &Option<String>| {
-        v.clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "df".to_string())
-    };
     match cell.kind {
         CellKind::Python => {
             let (defines, uses) = analyze_python(&cell.source);
@@ -1601,6 +1623,38 @@ mod notebook_codegen_tests {
         let order = gauss_notebook::dag::topo_order(&specs).unwrap();
         let pos = |id| order.iter().position(|x| *x == id).unwrap();
         assert!(pos(sql.id) < pos(chart.id));
+    }
+
+    #[test]
+    fn var_or_df_defaults_absent_or_empty_to_df() {
+        // The DAG builder and execution must agree, so an empty var that plans
+        // as "df" also runs as "df" (not an invalid-identifier error).
+        assert_eq!(var_or_df(&None), "df");
+        assert_eq!(var_or_df(&Some(String::new())), "df");
+        assert_eq!(var_or_df(&Some("orders".into())), "orders");
+        assert!(valid_ident(&var_or_df(&Some(String::new()))).is_ok());
+    }
+
+    #[test]
+    fn dashboard_number_params_preserve_integers() {
+        let params = vec![DashboardParameter {
+            name: "n".into(),
+            kind: ParamKind::Number,
+        }];
+        // A whole number binds as Int (not Float) so integer-key equality holds.
+        assert_eq!(
+            literal_for(&params, "n", &serde_json::json!(42)),
+            Some(Literal::Int(42))
+        );
+        assert_eq!(
+            literal_for(&params, "n", &serde_json::json!("7")),
+            Some(Literal::Int(7))
+        );
+        // Fractional values still bind as Float.
+        assert_eq!(
+            literal_for(&params, "n", &serde_json::json!(3.5)),
+            Some(Literal::Float(3.5))
+        );
     }
 
     #[test]

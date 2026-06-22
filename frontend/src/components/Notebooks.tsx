@@ -10,20 +10,9 @@ import {
   type QueryResult,
 } from "../api/client";
 import { ResultView } from "./ResultView";
-
-/** Minimal, escaped Markdown → HTML (headings, bold, inline code, line breaks).
- * Input is escaped first, so the result is safe to inject. Mirrors the renderer
- * used for dashboard text cards. */
-function mdToHtml(src: string): string {
-  const esc = src.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc
-    .replace(/^### (.*)$/gm, "<h4>$1</h4>")
-    .replace(/^## (.*)$/gm, "<h3>$1</h3>")
-    .replace(/^# (.*)$/gm, "<h2>$1</h2>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\n/g, "<br>");
-}
+import { BigNumberView } from "./BigNumberView";
+import { HtmlOutput } from "./HtmlOutput";
+import { mdToHtml } from "../lib/markdown";
 
 function newCell(kind: CellKind): NotebookCell {
   return { id: crypto.randomUUID(), kind, source: "" };
@@ -54,20 +43,6 @@ function cellPlaceholder(kind: CellKind): string {
     default:
       return "";
   }
-}
-
-/** A single headline value taken from the first cell of a DataFrame. */
-function BigNumber({ result }: { result: QueryResult }) {
-  const value = result.rows[0]?.[0];
-  const label = result.columns[0] ?? "";
-  return (
-    <div className="big-number">
-      <div className="big-number__value">
-        {value === null || value === undefined ? "∅" : String(value)}
-      </div>
-      <div className="big-number__label">{label}</div>
-    </div>
-  );
 }
 
 /** A compact preview table for a SQL/NL2SQL cell result (first rows). */
@@ -117,7 +92,7 @@ function OutputView({ out }: { out: CellOutput }) {
   }
   const html = data["text/html"];
   if (typeof html === "string") {
-    return <div className="nb-output" dangerouslySetInnerHTML={{ __html: html }} />;
+    return <HtmlOutput html={html} />;
   }
   const plain = data["text/plain"];
   return <pre className="nb-output">{typeof plain === "string" ? plain : JSON.stringify(data)}</pre>;
@@ -223,19 +198,28 @@ export function Notebooks({
     }
   }
 
+  // Any edit invalidates the "Saved" indicator until the next save.
+  function markDirty() {
+    setSaved(false);
+  }
+
   function patchCell(id: string, patch: Partial<NotebookCell>) {
+    markDirty();
     setCells((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   }
 
   function addCell(kind: CellKind) {
+    markDirty();
     setCells((cs) => [...cs, newCell(kind)]);
   }
 
   function removeCell(id: string) {
+    markDirty();
     setCells((cs) => cs.filter((c) => c.id !== id));
   }
 
   function moveCell(index: number, delta: number) {
+    markDirty();
     setCells((cs) => {
       const next = [...cs];
       const j = index + delta;
@@ -366,6 +350,7 @@ export function Notebooks({
         token,
       );
       setCells((cs) => [...cs, res.cell]);
+      markDirty();
       setAiPrompt("");
     } catch (e) {
       fail(e);
@@ -413,7 +398,10 @@ export function Notebooks({
           <input
             className="notebooks__title"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              markDirty();
+            }}
             aria-label="notebook name"
           />
           <span className="notebooks__actions">
@@ -429,7 +417,10 @@ export function Notebooks({
               <select
                 aria-label="publish target"
                 value={publishTarget}
-                onChange={(e) => setPublishTarget(e.target.value)}
+                onChange={(e) => {
+                  setPublishTarget(e.target.value);
+                  setPublishedId(null);
+                }}
                 title="Dashboard to publish cells to"
               >
                 <option value="">publish to…</option>
@@ -515,7 +506,10 @@ export function Notebooks({
                   </button>
                   {cell.kind !== "markdown" && (
                     <>
-                      <button onClick={() => runCell(cell)} disabled={running === cell.id}>
+                      <button
+                        onClick={() => runCell(cell)}
+                        disabled={running !== null || runningAll}
+                      >
                         {running === cell.id ? "Running…" : "Run"}
                       </button>
                       <button
@@ -633,7 +627,7 @@ export function Notebooks({
                 (cell.kind === "chart" ? (
                   <ResultView result={cellMeta.preview} />
                 ) : cell.kind === "bignumber" ? (
-                  <BigNumber result={cellMeta.preview} />
+                  <BigNumberView result={cellMeta.preview} />
                 ) : (
                   <PreviewTable result={cellMeta.preview} />
                 ))}

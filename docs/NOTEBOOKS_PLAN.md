@@ -45,6 +45,14 @@ hosted agent. Those are later/optional (§9).
 
 ## 3. Architecture
 
+> **Note — design vs. delivered.** This section captures the *original* design.
+> What shipped (see §5) differs in a few places: the document model lives in
+> **`gauss-core`** (`Notebook`/`NotebookCell`/`CellKind`), not `gauss-notebook`
+> (which holds the gateway, the reactive DAG, and `.ipynb` interop); kernel I/O is
+> **synchronous** over `POST /api/notebooks/{id}/run` + `/run-order` (no WebSocket
+> `/channels` route); and SQL/NL2SQL cells run via that same `/run` endpoint rather
+> than a dedicated `/sql` route. The route/box sketch below is indicative, not literal.
+
 ```
 React app ── Notebook UI (blocks, outputs, widgets)
    │   @deepnote/blocks (schema) · @deepnote/convert (ipynb) · kernel WS client
@@ -203,7 +211,10 @@ Each phase ends green under the existing bar: `cargo fmt`/`clippy -D warnings`/
 - **Data access:** SQL/NL2SQL blocks reuse the governed path — driver
   `ConnectionRegistry`, **RLS**, read-only guardrails, audit. Connection secrets stay
   server-side (already masked in API responses).
-- **Outputs:** size-capped/streamed; HTML/JS outputs sanitized before render.
+- **Outputs:** untrusted `text/html` cell output and published snapshot HTML are
+  rendered in a **sandboxed iframe** (scripts disabled, opaque origin), so a cell —
+  or a snapshot shown to a tokenless dashboard viewer — cannot script the app or
+  read the session token. matplotlib images flow through the `image/png` path.
 - **Secrets in code:** notebooks are content (permissioned); guidance to keep
   credentials in GaussAnalytics data sources, not cell source.
 
