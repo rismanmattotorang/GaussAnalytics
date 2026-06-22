@@ -12,8 +12,8 @@ use axum::Json;
 use chrono::Utc;
 use gauss_auth::Permission;
 use gauss_core::domain::{
-    Card, CardLayout, Collection, Dashboard, DashboardParameter, DashboardTab, ParamBinding,
-    ParamKind, RlsPolicy,
+    Card, CardLayout, Collection, Dashboard, DashboardParameter, DashboardTab, DashboardTextCard,
+    ParamBinding, ParamKind, RlsPolicy,
 };
 use gauss_core::error::CoreError;
 use gauss_core::gql::{CompareOp, Filter, Literal, Query};
@@ -201,6 +201,8 @@ pub struct CreateDashboardRequest {
     pub links: Vec<Uuid>,
     #[serde(default)]
     pub tabs: Vec<DashboardTab>,
+    #[serde(default)]
+    pub text_cards: Vec<DashboardTextCard>,
 }
 
 pub async fn create_dashboard(
@@ -219,6 +221,7 @@ pub async fn create_dashboard(
         layout: req.layout,
         links: req.links,
         tabs: req.tabs,
+        text_cards: req.text_cards,
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))
@@ -257,6 +260,7 @@ pub async fn update_dashboard(
         layout: req.layout,
         links: req.links,
         tabs: req.tabs,
+        text_cards: req.text_cards,
     };
     persist_dashboard(&st, &dash).await?;
     Ok(Json(dash))

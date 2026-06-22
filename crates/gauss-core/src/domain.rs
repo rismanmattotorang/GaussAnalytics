@@ -299,6 +299,18 @@ pub struct DashboardTab {
     pub card_ids: Vec<Uuid>,
 }
 
+/// A free-form Markdown panel on a dashboard (headings, notes, links) — the
+/// analog of Metabase's dashboard text cards. It carries content, not a query.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DashboardTextCard {
+    pub id: Uuid,
+    /// Markdown source rendered by the web UI.
+    pub markdown: String,
+    /// Column span (1 = half width, 2 = full), matching [`CardLayout`].
+    #[serde(default = "default_width")]
+    pub w: u8,
+}
+
 /// A dashboard arranges cards for at-a-glance consumption, optionally with
 /// shared filter parameters that apply across its cards and a saved layout.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,6 +332,9 @@ pub struct Dashboard {
     /// Optional tabs grouping cards into named sections.
     #[serde(default)]
     pub tabs: Vec<DashboardTab>,
+    /// Free-form Markdown panels (titles, notes, links) shown alongside cards.
+    #[serde(default)]
+    pub text_cards: Vec<DashboardTextCard>,
 }
 
 #[cfg(test)]

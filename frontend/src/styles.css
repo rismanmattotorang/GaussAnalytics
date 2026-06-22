@@ -483,3 +483,15 @@ code {
 .datasources .data-table button.link {
   margin-right: 10px;
 }
+
+/* Dashboard Markdown text cards. */
+.dash__text {
+  background: #151924;
+  border: 1px solid #29313f;
+  border-left: 3px solid #38bdf8;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.dash__text h2, .dash__text h3, .dash__text h4 { margin: 0.2rem 0; }
+.dash__notes { width: 100%; font-family: inherit; }

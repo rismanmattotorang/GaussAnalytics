@@ -18,6 +18,22 @@ function valuesObj(filters: Record<string, string>): Record<string, unknown> {
   return out;
 }
 
+/** Minimal, escaped Markdown → HTML for dashboard text cards (headings, bold,
+ * inline code, line breaks). Input is escaped first, so it is safe to inject. */
+function mdToHtml(src: string): string {
+  const esc = src
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return esc
+    .replace(/^### (.*)$/gm, "<h4>$1</h4>")
+    .replace(/^## (.*)$/gm, "<h3>$1</h3>")
+    .replace(/^# (.*)$/gm, "<h2>$1</h2>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\n/g, "<br>");
+}
+
 export function Dashboards({ token }: { token: string | null }) {
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -37,6 +53,7 @@ export function Dashboards({ token }: { token: string | null }) {
   const [bindings, setBindings] = useState<ParamBinding[]>([]);
   const [links, setLinks] = useState<string[]>([]);
   const [tabs, setTabs] = useState<DashboardTab[]>([]);
+  const [notes, setNotes] = useState("");
 
   function load() {
     Promise.all([api.dashboards(), api.cards()])
@@ -109,6 +126,7 @@ export function Dashboards({ token }: { token: string | null }) {
           layout: layout.map((l) => ({ card_id: l.card_id, w: l.w })),
           links: open.links,
           tabs: open.tabs,
+          text_cards: open.text_cards,
         },
         token,
       );
@@ -164,8 +182,11 @@ export function Dashboards({ token }: { token: string | null }) {
     if (!token || !name) return;
     setError(null);
     try {
+      const text_cards = notes.trim()
+        ? [{ id: crypto.randomUUID(), markdown: notes.trim(), w: 2 }]
+        : [];
       await api.createDashboard(
-        { name, card_ids: selected, parameters: params, bindings, links, tabs },
+        { name, card_ids: selected, parameters: params, bindings, links, tabs, text_cards },
         token,
       );
       setName("");
@@ -174,6 +195,7 @@ export function Dashboards({ token }: { token: string | null }) {
       setBindings([]);
       setLinks([]);
       setTabs([]);
+      setNotes("");
       load();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -250,6 +272,14 @@ export function Dashboards({ token }: { token: string | null }) {
         )}
 
         {error && <p className="app__error">{error}</p>}
+        {(open.text_cards ?? []).map((tc) => (
+          <div
+            key={tc.id}
+            className="dash__text"
+            style={{ gridColumn: tc.w === 2 ? "span 2" : "span 1" }}
+            dangerouslySetInnerHTML={{ __html: mdToHtml(tc.markdown) }}
+          />
+        ))}
         <div className="dash__grid">
           {layout
             .filter((item) => {
@@ -316,6 +346,15 @@ export function Dashboards({ token }: { token: string | null }) {
         <div className="dash__new">
           <h3>New dashboard</h3>
           <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+
+          <p className="muted">Text card (Markdown, optional)</p>
+          <textarea
+            className="dash__notes"
+            placeholder="# Title&#10;Notes, context, or **links** shown on the dashboard."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+          />
 
           <p className="muted">Cards</p>
           <div className="chips">
