@@ -20,13 +20,39 @@ gaussanalytics/
 │   ├── gauss-db/               # app metadata store: repository traits + impls
 │   ├── gauss-auth/             # password hashing, sessions, RBAC, permissions
 │   ├── gauss-mcp-gateway/      # integration layer → Gaussian MCP Servers
-│   ├── gauss-nl2sql/           # integration layer → Gaussian NL2SQL
+│   ├── gauss-nl2sql/           # in-house NL2SQL: grounding + in-process LLM + guardrails
 │   ├── gauss-server/           # axum HTTP/JSON API + static frontend serving
 │   ├── gauss-tui/              # Ratatui operator administration TUI
-│   └── gaussctl/               # CLI binary: serve | admin | migrate | version
+│   ├── gaussctl/               # CLI binary: serve | admin | migrate | version
+│   │   ── in-house NL2SQL engine (self-correcting text-to-SQL) ──
+│   ├── gauss-engine/           # agent loop · tool registry · models · UI components
+│   ├── gauss-semantic/         # semantic / modeling-definition layer
+│   ├── gauss-sqlguard/         # SQL AST guardrails (read-only · allowlist · LIMIT)
+│   ├── gauss-llm/              # LLM clients (mock/openai/anthropic/ollama/gemini/vllm)
+│   ├── gauss-sql/              # SQL runners (sqlite/postgres/snowflake) + CSV ingest
+│   ├── gauss-textsql/          # self-correcting text-to-SQL pipeline (TextToSqlTool)
+│   ├── gauss-chart/            # chart generation (Plotly JSON) from tabular data
+│   ├── gauss-tools/            # built-in agent tools (run_sql · visualize · files · memory)
+│   ├── gauss-embed/            # text-embedding providers
+│   ├── gauss-memory/           # vector-backed agent memory
+│   ├── gauss-runtime/          # shared runtime assembly (LLM selection · demo DB seeding)
+│   │   ── conversational UIs ──
+│   ├── gauss-chat/             # conversational web UI: axum SSE/WS chat server + agent runner bin
+│   └── gauss-chat-tui/         # conversational terminal UI (ratatui) — in-process chat client
 ├── frontend/                   # reused React/TS/JS/CSS application
 └── docs/                       # strategy, architecture, roadmap, ADRs
 ```
+
+### Conversational chat stack
+
+The BI server (`gauss-server`) and the chat clients (`gauss-chat`,
+`gauss-chat-tui`) are two front-ends over the same in-house engine. The chat
+clients wire an in-process **agent loop** (`gauss-engine`) with a tool registry
+(`gauss-tools`: `run_sql`, `text_to_sql`, `visualize_data`, file-system, python,
+and self-learning memory tools), an LLM client (`gauss-llm`), a SQL runner
+(`gauss-sql`), and read-only guardrails (`gauss-sqlguard`). The web client
+streams rich UI components over SSE/WebSocket; the TUI renders the same
+components to the terminal. Neither makes an external NL2SQL service call.
 
 ### Dependency direction (no cycles)
 

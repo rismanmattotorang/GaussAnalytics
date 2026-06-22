@@ -1,0 +1,29 @@
+[package]
+name = "gauss-chat-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GaussAnalytics terminal UI (ratatui) — an in-process chat client for the agent"
+
+[[bin]]
+name = "gauss-chat-tui"
+path = "src/main.rs"
+
+[dependencies]
+gauss-engine.workspace = true
+gauss-llm.workspace = true
+gauss-sql.workspace = true
+gauss-tools.workspace = true
+gauss-runtime.workspace = true
+tokio.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow = "1"
+ratatui.workspace = true
+crossterm = { workspace = true, features = ["event-stream"] }
+rusqlite.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+

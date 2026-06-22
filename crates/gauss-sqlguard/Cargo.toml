@@ -1,0 +1,10 @@
+[package]
+name = "gauss-sqlguard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GaussAnalytics SQL guardrails (dry-plan): AST validation, read-only enforcement, table allowlist, LIMIT injection"
+
+[dependencies]
+sqlparser.workspace = true
+

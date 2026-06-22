@@ -1,16 +1,28 @@
-//! `gauss-nl2sql` — integration layer to Gaussian's NL2SQL service.
+//! `gauss-nl2sql` — in-house NL2SQL integration.
 //!
-//! Gaussian Technologies owns the NL2SQL model; this crate owns the
-//! **grounding** (assembling schema context) and the **guardrails** (validating
-//! and constraining the returned query). The result is a `GuardedQuery` the
+//! Earlier revisions delegated translation to an external, credentialed
+//! "NL2SQL service" over HTTP. GaussAnalytics now owns the full text-to-SQL
+//! stack in-process (`gauss-engine`, `gauss-llm`, `gauss-semantic`,
+//! `gauss-sqlguard`, `gauss-textsql`), so there is no outbound service call and
+//! no service credential to manage — the platform drives a configured LLM
+//! provider directly.
+//!
+//! This crate owns the **grounding** (assembling schema context), drives an
+//! in-process [`LlmService`] to **translate** the question, and applies
+//! read-only **guardrails** to the result. The output is a `GuardedQuery` the
 //! server can execute under the requesting user's permissions.
 
 #![forbid(unsafe_code)]
 
 pub mod guard;
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use gauss_core::error::{CoreError, CoreResult};
+use gauss_engine::model::llm::{LlmMessage, LlmRequest};
+use gauss_engine::model::user::User;
+use gauss_engine::traits::LlmService;
 use serde::{Deserialize, Serialize};
 
 pub use guard::ensure_read_only;
@@ -72,41 +84,85 @@ pub trait Nl2Sql: Send + Sync {
     async fn translate(&self, request: &Nl2SqlRequest) -> CoreResult<Nl2SqlCandidate>;
 }
 
-/// HTTP-backed client for Gaussian's NL2SQL service.
-pub struct HttpNl2Sql {
-    client: reqwest::Client,
-    base_url: String,
+/// In-house NL2SQL translator backed by an in-process [`LlmService`].
+///
+/// This replaces the previous external, credentialed HTTP service: the schema
+/// context is rendered into a prompt and translated by a configured LLM
+/// provider (Anthropic, OpenAI, Ollama, Gemini, or the deterministic mock) from
+/// `gauss-llm`. The returned SQL still passes through [`ensure_read_only`] in
+/// the pipeline before it can run.
+pub struct LlmNl2Sql {
+    llm: Arc<dyn LlmService>,
 }
 
-impl HttpNl2Sql {
-    pub fn new(base_url: impl Into<String>, timeout_ms: u64) -> CoreResult<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(timeout_ms))
-            .build()
-            .map_err(|e| CoreError::Integration(format!("nl2sql client init failed: {e}")))?;
-        Ok(Self {
-            client,
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-        })
+impl LlmNl2Sql {
+    pub fn new(llm: Arc<dyn LlmService>) -> Self {
+        Self { llm }
+    }
+
+    /// Render the grounded schema context into a compact prompt block.
+    fn render_schema(context: &SchemaContext) -> String {
+        let mut s = format!("## Data model\nDatabase: {}\n\nTables:\n", context.database);
+        for table in &context.tables {
+            let cols = table
+                .columns
+                .iter()
+                .map(|(name, ty)| format!("{name} {ty}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            s.push_str(&format!("- {} ({cols})\n", table.name));
+        }
+        s
     }
 }
 
 #[async_trait]
-impl Nl2Sql for HttpNl2Sql {
+impl Nl2Sql for LlmNl2Sql {
     async fn translate(&self, request: &Nl2SqlRequest) -> CoreResult<Nl2SqlCandidate> {
-        let url = format!("{}/translate", self.base_url);
+        let system = format!(
+            "You are an expert data analyst for GaussAnalytics. Write a single, correct, \
+             read-only SQL SELECT query that answers the user's question using ONLY the \
+             tables and columns in the data model below. Return ONLY the SQL inside a \
+             ```sql code block.\n\n{}",
+            Self::render_schema(&request.context)
+        );
+
+        // Replay prior turns so the model can refine multi-turn conversations.
+        let mut messages = Vec::with_capacity(request.history.len() * 2 + 1);
+        for turn in &request.history {
+            messages.push(LlmMessage::new("user", turn.prompt.clone()));
+            messages.push(LlmMessage::new(
+                "assistant",
+                format!("```sql\n{}\n```", turn.sql),
+            ));
+        }
+        messages.push(LlmMessage::new("user", request.prompt.clone()));
+
+        let req = LlmRequest {
+            messages,
+            tools: None,
+            user: User::new("nl2sql"),
+            stream: false,
+            temperature: 0.0,
+            max_tokens: None,
+            system_prompt: Some(system),
+            metadata: Default::default(),
+        };
+
         let resp = self
-            .client
-            .post(url)
-            .json(request)
-            .send()
+            .llm
+            .send_request(req)
             .await
-            .map_err(|e| CoreError::Integration(e.to_string()))?;
-        resp.error_for_status()
-            .map_err(|e| CoreError::Integration(e.to_string()))?
-            .json::<Nl2SqlCandidate>()
-            .await
-            .map_err(|e| CoreError::Integration(e.to_string()))
+            .map_err(|e| CoreError::Integration(format!("nl2sql llm error: {e}")))?;
+        let content = resp
+            .content
+            .ok_or_else(|| CoreError::Integration("nl2sql llm returned no content".into()))?;
+
+        Ok(Nl2SqlCandidate {
+            sql: gauss_textsql::extract_sql(&content),
+            explanation: None,
+            confidence: None,
+        })
     }
 }
 
@@ -183,6 +239,42 @@ mod tests {
         let pipe = Nl2SqlPipeline::new(StubClient {
             sql: "DROP TABLE orders".into(),
         });
+        assert!(pipe.propose(&req()).await.is_err());
+    }
+
+    /// A scripted in-process LLM that returns a fixed fenced SQL block.
+    struct ScriptedLlm(String);
+
+    #[async_trait]
+    impl LlmService for ScriptedLlm {
+        async fn send_request(
+            &self,
+            _request: LlmRequest,
+        ) -> gauss_engine::error::Result<gauss_engine::model::llm::LlmResponse> {
+            Ok(gauss_engine::model::llm::LlmResponse {
+                content: Some(self.0.clone()),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn llm_translate_extracts_and_guards_sql() {
+        // The in-house translator parses the fenced SQL out of the LLM reply and
+        // the pipeline guardrails accept the read-only query — no external call.
+        let llm = Arc::new(ScriptedLlm(
+            "Here you go:\n```sql\nSELECT status, SUM(total) FROM orders GROUP BY status\n```"
+                .into(),
+        ));
+        let pipe = Nl2SqlPipeline::new(LlmNl2Sql::new(llm));
+        let guarded = pipe.propose(&req()).await.unwrap();
+        assert!(guarded.sql.starts_with("SELECT status"));
+    }
+
+    #[tokio::test]
+    async fn llm_translate_blocks_unsafe_sql() {
+        let llm = Arc::new(ScriptedLlm("```sql\nDROP TABLE orders\n```".into()));
+        let pipe = Nl2SqlPipeline::new(LlmNl2Sql::new(llm));
         assert!(pipe.propose(&req()).await.is_err());
     }
 }

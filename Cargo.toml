@@ -17,6 +17,21 @@ members = [
     "crates/gauss-auth",
     "crates/gauss-mcp-gateway",
     "crates/gauss-nl2sql",
+    # NL2SQL engine (ported in-house from the standalone text-to-SQL stack).
+    "crates/gauss-engine",
+    "crates/gauss-semantic",
+    "crates/gauss-sqlguard",
+    "crates/gauss-llm",
+    "crates/gauss-sql",
+    "crates/gauss-textsql",
+    # Agentic chat UI stack (ported web UI + TUI and their tool/runtime layers).
+    "crates/gauss-chart",
+    "crates/gauss-embed",
+    "crates/gauss-memory",
+    "crates/gauss-tools",
+    "crates/gauss-runtime",
+    "crates/gauss-chat",
+    "crates/gauss-chat-tui",
     "crates/gauss-server",
     "crates/gauss-tui",
     "crates/gaussctl",
@@ -43,21 +58,42 @@ gauss-drivers = { path = "crates/gauss-drivers" }
 gauss-scheduler = { path = "crates/gauss-scheduler" }
 gauss-mcp-gateway = { path = "crates/gauss-mcp-gateway" }
 gauss-nl2sql = { path = "crates/gauss-nl2sql" }
+gauss-engine = { path = "crates/gauss-engine" }
+gauss-semantic = { path = "crates/gauss-semantic" }
+gauss-sqlguard = { path = "crates/gauss-sqlguard" }
+gauss-llm = { path = "crates/gauss-llm" }
+gauss-sql = { path = "crates/gauss-sql" }
+gauss-textsql = { path = "crates/gauss-textsql" }
+gauss-chart = { path = "crates/gauss-chart" }
+gauss-embed = { path = "crates/gauss-embed" }
+gauss-memory = { path = "crates/gauss-memory" }
+gauss-tools = { path = "crates/gauss-tools" }
+gauss-runtime = { path = "crates/gauss-runtime" }
+gauss-chat = { path = "crates/gauss-chat" }
 gauss-server = { path = "crates/gauss-server" }
 gauss-tui = { path = "crates/gauss-tui" }
 
 # Async runtime + web
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-stream = "0.3"
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "catch-panic", "limit"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Serialization / data
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+schemars = "0.8"
+
+# NL2SQL engine support: JSON-schema tool args, SQL AST guardrails, CSV ingest.
+sqlparser = { version = "0.52", features = ["visitor"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+csv = "1"
 
 # Errors / utility
 thiserror = "2"

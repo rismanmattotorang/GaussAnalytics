@@ -1,0 +1,21 @@
+[package]
+name = "gauss-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GaussAnalytics built-in tools"
+
+[dependencies]
+gauss-engine.workspace = true
+gauss-chart.workspace = true
+gauss-sqlguard.workspace = true
+async-trait.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+schemars.workspace = true
+csv.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+

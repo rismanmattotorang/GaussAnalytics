@@ -1,0 +1,20 @@
+[package]
+name = "gauss-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GaussAnalytics core: models, traits, tool registry, agent loop, UI components"
+
+[dependencies]
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+async-stream.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+
