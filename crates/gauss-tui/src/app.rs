@@ -81,14 +81,18 @@ impl App {
         match self.active_tab() {
             "Overview" => {
                 let mut s = String::new();
-                s.push_str(&format!(
-                    "Status:    {}\n",
-                    self.health.as_deref().unwrap_or("(unreachable)")
+                let row = |label: &str, val: String| format!("{label:<12}{val}\n");
+                s.push_str(&row(
+                    "Status:",
+                    self.health
+                        .as_deref()
+                        .unwrap_or("(unreachable)")
+                        .to_string(),
                 ));
-                s.push_str(&format!("Databases: {}\n", self.databases.len()));
-                s.push_str(&format!("Users:     {}\n", self.users.len()));
-                s.push_str(&format!("Cards:     {}\n", self.cards));
-                s.push_str(&format!("Dashboards:{}\n", self.dashboards));
+                s.push_str(&row("Databases:", self.databases.len().to_string()));
+                s.push_str(&row("Users:", self.users.len().to_string()));
+                s.push_str(&row("Cards:", self.cards.to_string()));
+                s.push_str(&row("Dashboards:", self.dashboards.to_string()));
                 if !self.errors.is_empty() {
                     s.push_str("\nIssues:\n");
                     for e in &self.errors {

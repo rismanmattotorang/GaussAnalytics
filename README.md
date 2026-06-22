@@ -17,6 +17,14 @@ engines behind one driver/dialect abstraction.
 [Comparison](docs/COMPARISON.md) · [Roadmap](docs/ROADMAP.md) ·
 [Strategy](docs/STRATEGY.md)
 
+<br/>
+
+<img src="docs/img/web-ui.png" alt="GaussAnalytics web UI — a dashboard with a nivo bar chart, a big-number tile, and a data table" width="860"/>
+
+<sub>The React web app — explore, dashboard, and share. Below: the keyboard-driven operator console (`gaussctl admin`), rendered from the live widget tree.</sub>
+
+<img src="docs/img/tui-console.png" alt="GaussAnalytics admin TUI — the operator console showing health, data sources, and users" width="760"/>
+
 </div>
 
 ---

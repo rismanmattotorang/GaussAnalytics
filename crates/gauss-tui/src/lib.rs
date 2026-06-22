@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Tabs};
 use ratatui::{DefaultTerminal, Frame};
 
 pub use app::{App, TABS};
@@ -88,8 +88,13 @@ fn refresh(app: &mut App, client: &ApiClient) {
     }
 }
 
-/// Render one frame.
-fn draw(frame: &mut Frame, app: &App) {
+/// The accent used throughout the console (matches the web UI's cyan).
+const ACCENT: Color = Color::Rgb(56, 189, 248);
+const MUTED: Color = Color::Rgb(138, 147, 171);
+
+/// Render one frame. Public so the buffer can be rendered headlessly (e.g. for
+/// documentation screenshots) without driving a real terminal.
+pub fn draw(frame: &mut Frame, app: &App) {
     let areas = Layout::vertical([
         Constraint::Length(3), // tab bar
         Constraint::Min(0),    // body
@@ -101,13 +106,20 @@ fn draw(frame: &mut Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" GaussAnalytics — Admin Console "),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(ACCENT))
+                .title(Span::styled(
+                    " GaussAnalytics — Admin Console ",
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                )),
         )
+        .divider(Span::styled("·", Style::default().fg(MUTED)))
         .select(app.selected)
+        .style(Style::default().fg(MUTED))
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         );
     frame.render_widget(tabs, areas[0]);
@@ -115,10 +127,33 @@ fn draw(frame: &mut Frame, app: &App) {
     let body = Paragraph::new(app.body_text()).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!(" {} ", app.active_tab())),
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Rgb(41, 49, 63)))
+            .title(Span::styled(
+                format!(" {} ", app.active_tab()),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            )),
     );
     frame.render_widget(body, areas[1]);
 
-    let footer = Line::from(" ←/→ or Tab: switch · 1-6: jump · r: refresh · q: quit ").dim();
-    frame.render_widget(Paragraph::new(footer), areas[2]);
+    frame.render_widget(Paragraph::new(footer_line()), areas[2]);
+}
+
+/// The footer key hints, with keys accented and labels dimmed.
+fn footer_line() -> Line<'static> {
+    let key = |k: &'static str| Span::styled(k, Style::default().fg(ACCENT));
+    let lbl = |t: &'static str| Span::styled(t, Style::default().fg(MUTED));
+    Line::from(vec![
+        lbl(" "),
+        key("←/→"),
+        lbl(" or "),
+        key("Tab"),
+        lbl(" switch · "),
+        key("1-6"),
+        lbl(" jump · "),
+        key("r"),
+        lbl(" refresh · "),
+        key("q"),
+        lbl(" quit "),
+    ])
 }
