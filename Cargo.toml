@@ -26,6 +26,7 @@ members = [
     "crates/gauss-textsql",
     # Agentic chat UI stack (ported web UI + TUI and their tool/runtime layers).
     "crates/gauss-chart",
+    "crates/gauss-insight",
     "crates/gauss-embed",
     "crates/gauss-memory",
     "crates/gauss-tools",
@@ -65,6 +66,7 @@ gauss-llm = { path = "crates/gauss-llm" }
 gauss-sql = { path = "crates/gauss-sql" }
 gauss-textsql = { path = "crates/gauss-textsql" }
 gauss-chart = { path = "crates/gauss-chart" }
+gauss-insight = { path = "crates/gauss-insight" }
 gauss-embed = { path = "crates/gauss-embed" }
 gauss-memory = { path = "crates/gauss-memory" }
 gauss-tools = { path = "crates/gauss-tools" }

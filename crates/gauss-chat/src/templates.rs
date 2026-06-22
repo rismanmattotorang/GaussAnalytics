@@ -104,6 +104,16 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
   .bar-row .bar { height: 14px; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 3px; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--border); font-size: 12px; }
   .note { color: var(--muted); font-size: 13px; align-self: flex-start; }
+  /* GenBI result panel: summary, auto-chart, follow-up suggestions. */
+  .summary { color: var(--text); font-size: 13px; margin: 2px 0 8px; }
+  .summary .reason { color: var(--muted); }
+  .genbi { margin: 4px 0 10px; }
+  .genbi .bignum { font-size: 34px; font-weight: 700; color: var(--brand-light); }
+  .genbi svg { display: block; max-width: 100%; }
+  .genbi .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+  .genbi .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .suggest .chip { font-size: 12px; padding: 6px 11px; }
   /* Empty / starter state */
   #empty { margin: auto; max-width: 560px; text-align: center; color: var(--muted); padding: 24px; }
   #empty .mark-lg { width: 64px; height: 60px; margin-bottom: 14px; }
@@ -270,10 +280,117 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
     }
   }
 
+  // Brand-tinted categorical palette for the no-CDN inline charts.
+  const PALETTE = ["#4c7fe0","#3fb950","#d29922","#f85149","#a371f7","#2b5bb5","#1c9c8c","#e06c9f"];
+  const svgNS = "http://www.w3.org/2000/svg";
+  function svgEl(name, attrs) {
+    const e = document.createElementNS(svgNS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function numOf(v) { const n = Number(v); return isNaN(n) ? null : n; }
+
+  // Draw the recommended chart from its compact encoding + the result rows —
+  // entirely client-side, no Vega/CDN. Returns a DOM node, or null.
+  function genbiChart(chart, rows, cols) {
+    if (!chart || !chart.encoding || !rows.length) return null;
+    const enc = chart.encoding, type = chart.chart_type;
+    const wrap = document.createElement("div"); wrap.className = "genbi";
+    const W = 520, H = 220, padL = 44, padB = 28, padT = 8, padR = 8;
+
+    if (type === "number") {
+      const v = rows[0][enc.value];
+      const d = document.createElement("div"); d.className = "bignum"; d.textContent = v == null ? "—" : v;
+      wrap.appendChild(d); return wrap;
+    }
+    if (type === "bar" || type === "grouped_bar") {
+      const labelFor = r => type === "grouped_bar" && enc.series ? (r[enc.x] + " · " + r[enc.series]) : r[enc.x];
+      const items = rows.slice(0, 30).map(r => ({ l: String(labelFor(r) ?? ""), v: numOf(r[enc.y]) ?? 0 }));
+      const max = Math.max.apply(null, items.map(i => i.v).concat([1]));
+      items.forEach((it, i) => {
+        const row = document.createElement("div"); row.className = "bar-row";
+        const w = Math.max(2, Math.round((it.v / max) * 240));
+        row.innerHTML = '<span class="lbl">' + esc(it.l) + '</span><span class="bar" style="width:' + w + 'px;background:' + PALETTE[0] + '"></span><span>' + esc(it.v) + "</span>";
+        wrap.appendChild(row);
+      });
+      return wrap;
+    }
+    if (type === "pie") {
+      const items = rows.slice(0, 12).map((r, i) => ({ l: String(r[enc.x] ?? ""), v: Math.max(0, numOf(r[enc.y]) ?? 0), c: PALETTE[i % PALETTE.length] }));
+      const total = items.reduce((s, i) => s + i.v, 0) || 1;
+      const cx = 90, cy = 90, rad = 80; let a0 = -Math.PI / 2;
+      const svg = svgEl("svg", { viewBox: "0 0 360 180", width: 360, height: 180 });
+      items.forEach(it => {
+        const a1 = a0 + (it.v / total) * Math.PI * 2;
+        const x0 = cx + rad * Math.cos(a0), y0 = cy + rad * Math.sin(a0);
+        const x1 = cx + rad * Math.cos(a1), y1 = cy + rad * Math.sin(a1);
+        const large = (a1 - a0) > Math.PI ? 1 : 0;
+        const path = svgEl("path", { d: `M${cx},${cy} L${x0},${y0} A${rad},${rad} 0 ${large} 1 ${x1},${y1} Z`, fill: it.c });
+        svg.appendChild(path); a0 = a1;
+      });
+      wrap.appendChild(svg);
+      const leg = document.createElement("div"); leg.className = "legend";
+      items.forEach(it => { const s = document.createElement("span"); s.innerHTML = '<i style="background:' + it.c + '"></i>' + esc(it.l) + " (" + Math.round(it.v / total * 100) + "%)"; leg.appendChild(s); });
+      wrap.appendChild(leg); return wrap;
+    }
+    if (type === "line" || type === "multi_line" || type === "scatter") {
+      const seriesKey = enc.series;
+      const groups = {};
+      rows.forEach(r => { const k = seriesKey ? String(r[seriesKey] ?? "") : "series"; (groups[k] = groups[k] || []).push(r); });
+      const xsAll = rows.map(r => r[enc.x]);
+      const xNum = xsAll.every(v => numOf(v) != null);
+      const xVals = xsAll.map((v, i) => xNum ? numOf(v) : i);
+      const yVals = rows.map(r => numOf(r[enc.y])).filter(v => v != null);
+      const xMin = Math.min.apply(null, xVals), xMax = Math.max.apply(null, xVals);
+      const yMin = Math.min.apply(null, yVals.concat([0])), yMax = Math.max.apply(null, yVals.concat([1]));
+      const sx = v => padL + ((v - xMin) / ((xMax - xMin) || 1)) * (W - padL - padR);
+      const sy = v => H - padB - ((v - yMin) / ((yMax - yMin) || 1)) * (H - padT - padB);
+      const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H });
+      svg.appendChild(svgEl("line", { x1: padL, y1: H - padB, x2: W - padR, y2: H - padB, stroke: "#29313f" }));
+      svg.appendChild(svgEl("line", { x1: padL, y1: padT, x2: padL, y2: H - padB, stroke: "#29313f" }));
+      const keys = Object.keys(groups);
+      keys.forEach((k, gi) => {
+        const color = PALETTE[gi % PALETTE.length];
+        const pts = groups[k].map(r => {
+          const xi = xsAll.indexOf(r[enc.x]);
+          return [sx(xNum ? numOf(r[enc.x]) : xi), sy(numOf(r[enc.y]) ?? 0)];
+        });
+        if (type === "scatter") {
+          pts.forEach(p => svg.appendChild(svgEl("circle", { cx: p[0], cy: p[1], r: 3.5, fill: color })));
+        } else {
+          svg.appendChild(svgEl("polyline", { points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: color, "stroke-width": 2 }));
+          pts.forEach(p => svg.appendChild(svgEl("circle", { cx: p[0], cy: p[1], r: 2.5, fill: color })));
+        }
+      });
+      wrap.appendChild(svg);
+      if (seriesKey && keys.length > 1) {
+        const leg = document.createElement("div"); leg.className = "legend";
+        keys.forEach((k, gi) => { const s = document.createElement("span"); s.innerHTML = '<i style="background:' + PALETTE[gi % PALETTE.length] + '"></i>' + esc(k); leg.appendChild(s); });
+        wrap.appendChild(leg);
+      }
+      return wrap;
+    }
+    return null;
+  }
+
   function renderDataframe(data) {
     const cols = data.columns || [];
     const rows = data.rows || [];
     const wrap = document.createElement("div"); wrap.className = "dfwrap";
+
+    // GenBI summary (deterministic, computed server-side from the rows).
+    if (data.summary) {
+      const s = document.createElement("div"); s.className = "summary";
+      let html = "&#129518; " + esc(data.summary);
+      if (data.chart && data.chart.reason) html += ' <span class="reason">· ' + esc(data.chart.reason) + "</span>";
+      s.innerHTML = html; wrap.appendChild(s);
+    }
+    // GenBI recommended chart (inline, no CDN).
+    if (data.chart) {
+      const c = genbiChart(data.chart, rows, cols);
+      if (c) wrap.appendChild(c);
+    }
+
     const meta = document.createElement("div"); meta.className = "dfmeta";
     const total = data.row_count != null ? data.row_count : rows.length;
     meta.innerHTML = "<span>" + esc(data.title || "Results") + " · " + total + " rows</span>";
@@ -298,6 +415,17 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
       tb.appendChild(tr);
     });
     t.appendChild(tb); scroll.appendChild(t); wrap.appendChild(scroll);
+
+    // GenBI follow-up suggestions: grounded, one-click to re-ask.
+    if (Array.isArray(data.suggestions) && data.suggestions.length) {
+      const sug = document.createElement("div"); sug.className = "suggest";
+      data.suggestions.forEach(q => {
+        const b = document.createElement("button"); b.type = "button"; b.className = "chip";
+        b.textContent = q; b.onclick = () => send(q);
+        sug.appendChild(b);
+      });
+      wrap.appendChild(sug);
+    }
     add(wrap);
   }
 

@@ -928,6 +928,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gauss-insight"
+version = "0.1.0"
+dependencies = [
+ "gauss-chart",
+ "gauss-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "gauss-llm"
 version = "0.1.0"
 dependencies = [
@@ -1080,6 +1089,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "gauss-engine",
+ "gauss-insight",
  "gauss-semantic",
  "gauss-sql",
  "gauss-sqlguard",
@@ -1098,6 +1108,7 @@ dependencies = [
  "csv",
  "gauss-chart",
  "gauss-engine",
+ "gauss-insight",
  "gauss-sqlguard",
  "schemars",
  "serde",

@@ -31,7 +31,8 @@ gaussanalytics/
 │   ├── gauss-llm/              # LLM clients (mock/openai/anthropic/ollama/gemini/vllm)
 │   ├── gauss-sql/              # SQL runners (sqlite/postgres/snowflake) + CSV ingest
 │   ├── gauss-textsql/          # self-correcting text-to-SQL pipeline (TextToSqlTool)
-│   ├── gauss-chart/            # chart generation (Plotly JSON) from tabular data
+│   ├── gauss-chart/            # charts: deterministic Vega-Lite recommender + Plotly figures
+│   ├── gauss-insight/          # GenBI result intelligence (chart + summary + grounded follow-ups)
 │   ├── gauss-tools/            # built-in agent tools (run_sql · visualize · files · memory)
 │   ├── gauss-embed/            # text-embedding providers
 │   ├── gauss-memory/           # vector-backed agent memory
@@ -53,6 +54,17 @@ and self-learning memory tools), an LLM client (`gauss-llm`), a SQL runner
 (`gauss-sql`), and read-only guardrails (`gauss-sqlguard`). The web client
 streams rich UI components over SSE/WebSocket; the TUI renders the same
 components to the terminal. Neither makes an external NL2SQL service call.
+
+**GenBI result intelligence.** Every dataframe result is enriched in-process by
+`gauss-insight` (built on `gauss-chart`): a deterministic chart recommendation
+(emitted as a Vega-Lite v5 spec grounded only in real columns, plus a compact
+encoding the no-CDN renderers draw directly), a plain-language summary computed
+from the rows, and grounded follow-up questions. This mirrors WrenAI's GenBI
+result panel but spends **no extra LLM call**, so it is instant, reproducible,
+and cannot hallucinate a column or misstate a figure. The panel rides along on
+the dataframe component (`data.chart`, `data.summary`, `data.suggestions`) and
+renders in the chat web UI (inline SVG + follow-up chips), the TUI, and the
+JSON API alike.
 
 ### Dependency direction (no cycles)
 

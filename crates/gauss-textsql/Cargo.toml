@@ -9,6 +9,7 @@ description = "GaussAnalytics self-correcting text-to-SQL pipeline (schema linki
 gauss-engine.workspace = true
 gauss-semantic.workspace = true
 gauss-sqlguard.workspace = true
+gauss-insight.workspace = true
 async-trait.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true

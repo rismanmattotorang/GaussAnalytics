@@ -243,6 +243,28 @@ fn render_dataframe(data: &Value) -> Vec<Line<'static>> {
     } else {
         lines.push(dim(format!("{total} row(s)")));
     }
+
+    // GenBI panel: deterministic summary, recommended chart hint, follow-ups.
+    if let Some(summary) = data.get("summary").and_then(Value::as_str) {
+        if !summary.is_empty() {
+            lines.push(styled(
+                format!("∑ {summary}"),
+                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    if let Some(reason) = data.pointer("/chart/reason").and_then(Value::as_str) {
+        let ctype = data
+            .pointer("/chart/chart_type")
+            .and_then(Value::as_str)
+            .unwrap_or("chart");
+        lines.push(dim(format!("📊 suggested {ctype}: {reason}")));
+    }
+    if let Some(suggestions) = data.get("suggestions").and_then(Value::as_array) {
+        for s in suggestions.iter().filter_map(Value::as_str) {
+            lines.push(dim(format!("→ {s}")));
+        }
+    }
     lines
 }
 
@@ -327,6 +349,33 @@ mod tests {
                 assert!(joined.contains("Acme"));
                 assert!(joined.contains("Globex"));
                 assert!(joined.contains("2 row"));
+            }
+            _ => panic!("expected lines"),
+        }
+    }
+
+    #[test]
+    fn dataframe_renders_genbi_summary_and_suggestions() {
+        let rich = json!({"type":"dataframe","data":{
+            "columns":["country","revenue"],
+            "rows":[{"country":"US","revenue":100},{"country":"DE","revenue":80}],
+            "row_count":2,
+            "summary":"2 rows. revenue: total 180, average 90, ranging 80 to 100. Top country is US (100).",
+            "chart":{"chart_type":"pie","reason":"revenue share across 2 country."},
+            "suggestions":["Break revenue down by country.","What are the top 10 by revenue?"]
+        }});
+        match render_component(&rich, None) {
+            Rendered::Lines(ls) => {
+                let joined = ls.iter().map(line_text).collect::<Vec<_>>().join("\n");
+                assert!(joined.contains("total 180"), "summary missing: {joined}");
+                assert!(
+                    joined.contains("suggested pie"),
+                    "chart hint missing: {joined}"
+                );
+                assert!(
+                    joined.contains("Break revenue down by country"),
+                    "follow-up missing: {joined}"
+                );
             }
             _ => panic!("expected lines"),
         }

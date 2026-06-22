@@ -496,10 +496,15 @@ impl TextToSqlTool {
             .save_tool_usage(question, "text_to_sql", &args, context, true, None)
             .await;
 
-        let component = UiComponent::new(RichComponent::dataframe(
+        // GenBI panel: recommend a chart, summarize, and suggest follow-ups —
+        // computed from the (already PII-redacted) rows, with no extra LLM call.
+        let insights = gauss_insight::analyze(&df, Some("Query Results"));
+        let summary = insights.summary.clone();
+        let component = UiComponent::new(RichComponent::dataframe_with_insights(
             df.to_records(),
             columns.clone(),
             Some("Query Results".to_string()),
+            insights.to_json(),
         ));
 
         let mut note = if corrections > 0 {
@@ -521,7 +526,7 @@ impl TextToSqlTool {
 
         ToolResult::success(format!(
             "Generated SQL{note}:\n```sql\n{sql}\n```\nReturned {row_count} row(s) with columns \
-             [{}].\n{preview}",
+             [{}].\nSummary: {summary}\n{preview}",
             columns.join(", ")
         ))
         .with_ui(component)
