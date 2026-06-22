@@ -208,6 +208,13 @@ Delivered (compiling + tested):
       bypassed by query text); admins bypass. Enforced uniformly on the dataset
       read path.
 
+Post-1.0 initiatives:
+
+- [ ] **Embedded data notebooks** (Deepnote-class): NL2SQL + preprocessing +
+      ML/DL in a block notebook, with outputs publishable to dashboards, executed
+      against a user-local Jupyter runtime. Design & plan:
+      [`NOTEBOOKS_PLAN.md`](./NOTEBOOKS_PLAN.md).
+
 Remaining (tracked in [`UI_ASSESSMENT.md`](./UI_ASSESSMENT.md)):
 
 - [ ] Geographic **map** charts; inline SQL autocomplete; a schedules UI.
