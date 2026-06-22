@@ -214,7 +214,14 @@ export interface DashboardCardResult {
 
 // --- Notebooks ----------------------------------------------------------
 
-export type CellKind = "markdown" | "python" | "sql" | "nl2sql" | "input";
+export type CellKind =
+  | "markdown"
+  | "python"
+  | "sql"
+  | "nl2sql"
+  | "input"
+  | "chart"
+  | "bignumber";
 
 export interface NotebookCell {
   id: string;
@@ -412,4 +419,9 @@ export const api = {
     authed<{ ok: boolean }>(`/notebooks/${id}/interrupt`, "POST", token),
   runCell: (id: string, cell: NotebookCell, token: string) =>
     authed<RunCellResponse>(`/notebooks/${id}/run`, "POST", token, { cell }),
+  runOrder: (id: string, cells: NotebookCell[], changed: string | null, token: string) =>
+    authed<{ order: string[] }>(`/notebooks/${id}/run-order`, "POST", token, {
+      cells,
+      changed,
+    }),
 };

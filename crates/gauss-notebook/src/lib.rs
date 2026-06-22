@@ -15,6 +15,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod dag;
+
 use futures::{SinkExt, StreamExt};
 use gauss_core::error::{CoreError, CoreResult};
 use serde::Serialize;

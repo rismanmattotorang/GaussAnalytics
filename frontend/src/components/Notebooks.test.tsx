@@ -7,6 +7,7 @@ vi.mock("../api/client", () => ({
   api: {
     notebooks: vi.fn(),
     runCell: vi.fn(),
+    runOrder: vi.fn(),
     startKernel: vi.fn(),
     stopKernel: vi.fn(),
     updateNotebook: vi.fn(),
@@ -97,5 +98,44 @@ describe("Notebooks", () => {
     await waitFor(() => expect(screen.getByText("1 row")).toBeTruthy());
     // The preview header column is rendered.
     expect(screen.getByRole("columnheader", { name: "n" })).toBeTruthy();
+  });
+
+  it("renders a big-number cell from a fetched DataFrame", async () => {
+    (api.notebooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...sample, cells: [{ id: "b1", kind: "bignumber", source: "", input_var: "df" }] },
+    ]);
+    (api.runCell as ReturnType<typeof vi.fn>).mockResolvedValue({
+      kernel_id: "k1",
+      outputs: [],
+      preview: { columns: ["revenue"], rows: [[1234]] },
+    });
+    render(<Notebooks token="admin" databases={[]} />);
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    // The headline value and its label (column name) render.
+    await waitFor(() => expect(screen.getByText("1234")).toBeTruthy());
+    expect(screen.getByText("revenue")).toBeTruthy();
+  });
+
+  it("runs all cells in the server-computed dependency order", async () => {
+    (api.runOrder as ReturnType<typeof vi.fn>).mockResolvedValue({ order: ["c2", "c1"] });
+    (api.runCell as ReturnType<typeof vi.fn>).mockResolvedValue({ kernel_id: "k1", outputs: [] });
+    render(<Notebooks token="admin" databases={[]} />);
+    await waitFor(() => expect(screen.getByText("Analysis")).toBeTruthy());
+    fireEvent.click(screen.getByText("Analysis"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Run all" }));
+    // Run order is requested, then cells execute (markdown c1 is skipped, so
+    // only the python cell c2 runs).
+    await waitFor(() => expect(api.runOrder).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(api.runCell).toHaveBeenCalledWith(
+        "nb-1",
+        expect.objectContaining({ id: "c2" }),
+        "admin",
+      ),
+    );
   });
 });

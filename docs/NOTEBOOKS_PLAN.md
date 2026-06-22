@@ -1,6 +1,6 @@
 # GaussAnalytics Notebooks — Design & Delivery Plan
 
-> **Status:** N0–N2 delivered · N3–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
+> **Status:** N0–N3 delivered · N4–N5 proposed (post-1.0 initiative) · **Owner:** Gaussian Technologies
 > **Theme:** bring a [Deepnote](https://github.com/deepnote/deepnote)-class data
 > notebook into GaussAnalytics — NL2SQL, data preprocessing, ML/DL — and wire its
 > outputs into dashboards.
@@ -143,8 +143,17 @@ permissions/`CreateContent`, and appear in export/import.
   JSON). Note: policy-level **RLS** applies on the structured (GQL) path; raw-SQL and
   NL2SQL cells are permission-checked and read-only-guarded. The explicit dependency
   **DAG** (variable def/use analysis, cycle rejection) lands in N3.
-- **N3 — Visuals & reactivity:** **Chart** + **Big Number** blocks (nivo from a
-  DataFrame) and matplotlib/plotly passthrough; the dependency DAG.
+- **N3 — Visuals & reactivity ✅ delivered:** **Chart** and **Big Number** cells
+  render a kernel `DataFrame` (fetched as `{columns, rows}`) through the existing
+  **nivo** stack — Chart cells reuse `ResultView` (bar/line/area/funnel/scatter/combo/
+  pie + smart default + table fallback), Big Number shows a headline value.
+  **matplotlib/plotly** pass through Python cells via `display_data` (image/PNG/SVG,
+  HTML), rendered as-is. A real reactive **dependency DAG** lives in `gauss-notebook`
+  (`dag.rs`): cells are reduced to define/use variable sets (SQL/Input define, Chart/
+  BigNumber use, Python via a small heuristic), `topo_order` gives a safe run order and
+  **rejects cycles**, and `downstream` gives the minimal re-run set. The server exposes
+  `POST /api/notebooks/{id}/run-order`; the UI's **Run all** executes in topological
+  order and **Run ↓** re-runs a cell plus its transitive dependents.
 - **N4 — Dashboards & schedule:** publish block outputs as dashboard cards; scheduled
   notebook runs refresh them (`gauss-scheduler`).
 - **N5 — Interop & scale:** `.ipynb` import/export (`@deepnote/convert`); in-notebook
